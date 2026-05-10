@@ -311,6 +311,23 @@ function generatePuzzle(config: Config, seedCode: string): Puzzle {
       next = running / operand
     }
 
+    if (next === 0) {
+      const backupOperand = Math.max(
+        1,
+        Math.floor(rng() * (tier.max - tier.min + 1)) + tier.min,
+      )
+      const backupResult = running + backupOperand
+      edges.push({
+        from: path[i],
+        to: path[i + 1],
+        op: '+',
+        operand: backupOperand,
+        result: backupResult,
+      })
+      running = backupResult
+      continue
+    }
+
     edges.push({ from: path[i], to: path[i + 1], op, operand, result: next })
     running = next
   }

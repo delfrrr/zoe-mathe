@@ -408,8 +408,12 @@ html, body {
 
 @media print {
   @page { size: letter; margin: 0; }
+  .app-root { display: block; height: auto; }
   .no-print, .sidebar { display: none !important; }
-  .preview { padding: 0; }
+  .preview { padding: 0; overflow: visible; background: white; }
+  .paper-header { padding: 66px 56px 18px; }
+  .paper-body { padding: 56px 56px 10px; }
+  .paper-footer { padding: 2px 56px 4px; }
   .paper {
     box-shadow: none;
     border: none;
