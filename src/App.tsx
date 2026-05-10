@@ -410,12 +410,9 @@ function App() {
     }
   }
 
-  const maxOperandDigits = useMemo(() => {
-    const maxVal = puzzle.edges.reduce((acc, e) => Math.max(acc, Math.abs(e.operand)), 0)
-    return String(maxVal || 0).length
-  }, [puzzle.edges])
-
-  const cellFontBase = maxOperandDigits >= 4 ? 12 : 13
+  const densityScale = config.operations >= 70 ? 0.82 : config.operations >= 45 ? 0.9 : 1
+  const arrowOpFont = Math.round(14 * densityScale)
+  const arrowNumFont = Math.round(13 * densityScale)
 
   const applyPreset = (preset: Preset) => {
     setActivePreset(preset.key)
@@ -637,7 +634,7 @@ function App() {
                           y={-12}
                           textAnchor="middle"
                           dominantBaseline="middle"
-                          style={{ fontSize: 14, fontWeight: 600 }}
+                          style={{ fontSize: arrowOpFont, fontWeight: 600 }}
                         >
                           {OP_LABEL[edge.op]}
                         </text>
@@ -647,7 +644,7 @@ function App() {
                           y={14}
                           textAnchor="middle"
                           dominantBaseline="middle"
-                          style={{ fontSize: 13, fontWeight: 600 }}
+                          style={{ fontSize: arrowNumFont, fontWeight: 600 }}
                         >
                           {edge.operand}
                         </text>
@@ -659,7 +656,7 @@ function App() {
                           x={-9}
                           y={4}
                           textAnchor="end"
-                          style={{ fontSize: 14, fontWeight: 600 }}
+                          style={{ fontSize: arrowOpFont, fontWeight: 600 }}
                         >
                           {OP_LABEL[edge.op]}
                         </text>
@@ -668,7 +665,7 @@ function App() {
                           x={9}
                           y={4}
                           textAnchor="start"
-                          style={{ fontSize: 13, fontWeight: 600 }}
+                          style={{ fontSize: arrowNumFont, fontWeight: 600 }}
                         >
                           {edge.operand}
                         </text>
@@ -701,16 +698,7 @@ function App() {
                         className="cell-value mono"
                         fill={isStart ? '#fff' : '#111'}
                         textAnchor="middle"
-                        style={{
-                          fontSize:
-                            String(Math.abs(shown)).length >= 5
-                              ? cellFontBase - 9
-                              : String(Math.abs(shown)).length >= 4
-                                ? cellFontBase - 6
-                                : String(Math.abs(shown)).length >= 3
-                                  ? cellFontBase - 2
-                                  : cellFontBase,
-                        }}
+                        style={{ fontSize: arrowNumFont, fontWeight: 600 }}
                       >
                         {shown}
                       </text>
