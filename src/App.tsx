@@ -1,48 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
+import {
+  generatePuzzle as generatePuzzleLib,
+  TIERS,
+  type Config,
+  type Op,
+  type TierKey,
+} from './lib/generator'
 import './App.css'
-
-type TierKey = '0-9' | '10-99' | '100-999' | '1k-9k'
-type Op = '+' | '-' | 'x' | '/'
-
-type Config = {
-  operations: number
-  selfChecks: number
-  tier: TierKey
-  ops: Op[]
-}
-
-type Cell = { idx: number; col: number; row: number }
-type Edge = {
-  from: number
-  to: number
-  op: Op
-  operand: number
-  result: number
-}
-
-type Puzzle = {
-  cols: number
-  rows: number
-  cells: Cell[]
-  path: number[]
-  edges: Edge[]
-  startValue: number
-  finalValue: number
-  shownValues: Record<number, number>
-}
 
 type Preset = {
   key: 'starter' | 'standard' | 'expert'
   label: string
   meta: string
   config: Config
-}
-
-const TIERS: Record<TierKey, { min: number; max: number; label: string }> = {
-  '0-9': { min: 0, max: 9, label: '0-9' },
-  '10-99': { min: 10, max: 99, label: '10-99' },
-  '100-999': { min: 100, max: 999, label: '100-999' },
-  '1k-9k': { min: 1000, max: 9000, label: '1k-9k' },
 }
 
 const PRESETS: Preset[] = [
@@ -78,25 +48,6 @@ const OP_LABEL: Record<Op, string> = {
   '/': '÷',
 }
 
-function mulberry32(seed: number) {
-  let t = seed >>> 0
-  return () => {
-    t += 0x6d2b79f5
-    let r = Math.imul(t ^ (t >>> 15), t | 1)
-    r ^= r + Math.imul(r ^ (r >>> 7), r | 61)
-    return ((r ^ (r >>> 14)) >>> 0) / 4294967296
-  }
-}
-
-function hashString(input: string) {
-  let h = 2166136261
-  for (let i = 0; i < input.length; i += 1) {
-    h ^= input.charCodeAt(i)
-    h = Math.imul(h, 16777619)
-  }
-  return h >>> 0
-}
-
 function randomSeedCode() {
   const n = Math.floor(Math.random() * 36 ** 6)
   return n.toString(36).toUpperCase().padStart(6, '0')
@@ -120,248 +71,6 @@ function formatMinutes(totalSec: number) {
   return `≈ ${min} min`
 }
 
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n))
-}
-
-function keyOf(col: number, row: number, cols: number) {
-  return row * cols + col
-}
-
-function buildPath(
-  rows: number,
-  cols: number,
-  targetNodes: number,
-  rng: () => number,
-): number[] {
-  const dirs = [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1],
-  ]
-
-  const startCol = Math.floor(rng() * cols)
-  const startRow = Math.floor(rng() * rows)
-  const start = keyOf(startCol, startRow, cols)
-
-  const visited = new Set<number>([start])
-  const path = [start]
-
-  const freeExitCount = (k: number, additionalVisited: Set<number>) => {
-    const col = k % cols
-    const row = Math.floor(k / cols)
-    let count = 0
-    for (const [dx, dy] of dirs) {
-      const nc = col + dx
-      const nr = row + dy
-      if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue
-      const nk = keyOf(nc, nr, cols)
-      if (!additionalVisited.has(nk)) count += 1
-    }
-    return count
-  }
-
-  const dfs = (): boolean => {
-    if (path.length >= targetNodes) return true
-
-    const current = path[path.length - 1]
-    const col = current % cols
-    const row = Math.floor(current / cols)
-
-    const neighbors: number[] = []
-    for (const [dx, dy] of dirs) {
-      const nc = col + dx
-      const nr = row + dy
-      if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue
-      const nk = keyOf(nc, nr, cols)
-      if (!visited.has(nk)) neighbors.push(nk)
-    }
-
-    neighbors.sort((a, b) => {
-      const av = freeExitCount(a, visited)
-      const bv = freeExitCount(b, visited)
-      if (bv !== av) return bv - av
-      return rng() - 0.5
-    })
-
-    for (const next of neighbors) {
-      visited.add(next)
-      path.push(next)
-      if (dfs()) return true
-      path.pop()
-      visited.delete(next)
-    }
-
-    return false
-  }
-
-  dfs()
-  return path
-}
-
-function chooseEvenlyDistributed(pathLength: number, count: number) {
-  const picks = new Set<number>()
-  if (count <= 0 || pathLength <= 2) return picks
-
-  const maxMiddle = pathLength - 2
-  const target = Math.min(count, maxMiddle)
-  for (let i = 1; i <= target; i += 1) {
-    const pos = Math.round((i * (pathLength - 1)) / (target + 1))
-    const bounded = clamp(pos, 1, pathLength - 2)
-    picks.add(bounded)
-  }
-  return picks
-}
-
-function generatePuzzle(config: Config, seedCode: string): Puzzle {
-  const nodes = config.operations + 1
-  const side = clamp(Math.ceil(Math.sqrt(nodes / 0.7)), 4, 16)
-  const rows = side
-  const cols = side
-
-  const seedInt = parseInt(seedCode, 36) >>> 0
-  const configHash = hashString(JSON.stringify(config))
-  const rng = mulberry32(seedInt ^ configHash)
-
-  let bestPath: number[] = []
-  for (let i = 0; i < 80; i += 1) {
-    const trial = buildPath(rows, cols, nodes, rng)
-    if (trial.length > bestPath.length) bestPath = trial
-    if (bestPath.length >= nodes) break
-  }
-
-  const path = bestPath.slice(0, Math.min(nodes, bestPath.length))
-
-  const tier = TIERS[config.tier]
-  const startValue = clamp(
-    Math.floor(rng() * (tier.max - tier.min + 1)) + tier.min,
-    1,
-    5000,
-  )
-
-  const edges: Edge[] = []
-  let running = startValue
-  const MAX_MAGNITUDE = 99999
-
-  for (let i = 0; i < path.length - 1; i += 1) {
-    const validOps = config.ops.filter((op) => {
-      if (op === '/') {
-        for (let d = 2; d <= 12; d += 1) {
-          if (running % d === 0) return true
-        }
-        return false
-      }
-      if (op === '-') {
-        return running > tier.min + 1
-      }
-      if (op === 'x') {
-        return Math.abs(running) < 20000
-      }
-      return true
-    })
-
-    const pool = validOps.length > 0 ? validOps : (['+', '-'] as Op[])
-    const op = pool[Math.floor(rng() * pool.length)]
-
-    let operand: number
-    let next: number
-
-    if (op === '+') {
-      operand = Math.floor(rng() * (tier.max - tier.min + 1)) + tier.min
-      next = running + operand
-      if (Math.abs(next) > MAX_MAGNITUDE) {
-        const capped = clamp(MAX_MAGNITUDE - Math.abs(running), tier.min, tier.max)
-        operand = Math.max(1, capped)
-        next = running + operand
-      }
-    } else if (op === '-') {
-      const safeMax = Math.min(tier.max, Math.max(tier.min, running - 1))
-      const safeMin = Math.min(tier.min, safeMax)
-      operand = Math.floor(rng() * (safeMax - safeMin + 1)) + safeMin
-      next = running - operand
-    } else if (op === 'x') {
-      operand = Math.floor(rng() * 8) + 2
-      next = running * operand
-      if (Math.abs(next) > MAX_MAGNITUDE) {
-        const backupOperand = Math.floor(rng() * (tier.max - tier.min + 1)) + tier.min
-        edges.push({
-          from: path[i],
-          to: path[i + 1],
-          op: running > backupOperand ? '-' : '+',
-          operand: backupOperand,
-          result: running > backupOperand ? running - backupOperand : running + backupOperand,
-        })
-        running = edges[edges.length - 1].result
-        continue
-      }
-    } else {
-      const divisors: number[] = []
-      for (let d = 2; d <= 12; d += 1) {
-        if (running % d === 0) divisors.push(d)
-      }
-      if (divisors.length === 0) {
-        operand = Math.floor(rng() * (tier.max - tier.min + 1)) + tier.min
-        next = running + operand
-        edges.push({ from: path[i], to: path[i + 1], op: '+', operand, result: next })
-        running = next
-        continue
-      }
-      operand = divisors[Math.floor(rng() * divisors.length)]
-      next = running / operand
-    }
-
-    if (next === 0) {
-      const backupOperand = Math.max(
-        1,
-        Math.floor(rng() * (tier.max - tier.min + 1)) + tier.min,
-      )
-      const backupResult = running + backupOperand
-      edges.push({
-        from: path[i],
-        to: path[i + 1],
-        op: '+',
-        operand: backupOperand,
-        result: backupResult,
-      })
-      running = backupResult
-      continue
-    }
-
-    edges.push({ from: path[i], to: path[i + 1], op, operand, result: next })
-    running = next
-  }
-
-  const shownIndices = chooseEvenlyDistributed(path.length, config.selfChecks)
-  const shownValues: Record<number, number> = { 0: startValue }
-  let value = startValue
-  edges.forEach((edge, edgeIdx) => {
-    value = edge.result
-    const pathIdx = edgeIdx + 1
-    if (pathIdx === path.length - 1 || shownIndices.has(pathIdx)) {
-      shownValues[pathIdx] = value
-    }
-  })
-
-  const cells: Cell[] = []
-  for (let row = 0; row < rows; row += 1) {
-    for (let col = 0; col < cols; col += 1) {
-      cells.push({ idx: keyOf(col, row, cols), col, row })
-    }
-  }
-
-  return {
-    cols,
-    rows,
-    cells,
-    path,
-    edges,
-    startValue,
-    finalValue: value,
-    shownValues,
-  }
-}
-
 function App() {
   const [activePreset, setActivePreset] = useState<Preset['key']>('standard')
   const [config, setConfig] = useState<Config>(PRESETS[1].config)
@@ -372,7 +81,7 @@ function App() {
     return randomSeedCode()
   })
 
-  const puzzle = useMemo(() => generatePuzzle(config, seed), [config, seed])
+  const puzzle = useMemo(() => generatePuzzleLib(config, seed), [config, seed])
 
   const timeSec = config.operations * secondsPerStep(config.tier, config.ops)
   const timeLabel = formatMinutes(timeSec)
@@ -410,6 +119,10 @@ function App() {
   }, [])
 
   const pathSet = useMemo(() => new Set(puzzle.path), [puzzle.path])
+  const pathIndexByCell = useMemo(
+    () => new Map(puzzle.path.map((idx, pathIndex) => [idx, pathIndex])),
+    [puzzle.path],
+  )
   const cellMap = useMemo(() => new Map(puzzle.cells.map((c) => [c.idx, c])), [puzzle.cells])
 
   const usableW = 640
@@ -694,7 +407,7 @@ function App() {
 
               {puzzle.cells.filter((cell) => pathSet.has(cell.idx)).map((cell) => {
                 const { x, y } = toXY(cell.idx)
-                const pathIndex = puzzle.path.indexOf(cell.idx)
+                const pathIndex = pathIndexByCell.get(cell.idx) ?? -1
                 const isStart = pathIndex === 0
                 const shown = pathIndex >= 0 ? puzzle.shownValues[pathIndex] : undefined
 
