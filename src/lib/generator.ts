@@ -3,7 +3,6 @@ export type Op = '+' | '-' | 'x' | '/'
 
 export type Config = {
   operations: number
-  selfChecks: number
   tier: TierKey
   ops: Op[]
 }
@@ -25,7 +24,8 @@ export type Puzzle = {
   edges: Edge[]
   startValue: number
   finalValue: number
-  shownValues: Record<number, number>
+  pathValues: number[]
+  checkpointPathIndices: number[]
 }
 
 export const TIERS: Record<TierKey, { min: number; max: number; label: string }> = {
@@ -119,20 +119,27 @@ function buildPath(rows: number, cols: number, targetNodes: number, rng: () => n
   return path
 }
 
-function chooseEvenlyDistributed(pathLength: number, count: number) {
+function pickCheckpointIndices(pathLength: number, count: number): number[] {
+  if (count <= 0 || pathLength <= 1) return []
+  const requested = Math.min(count, pathLength - 1)
   const picks = new Set<number>()
-  if (count <= 0 || pathLength <= 2) return picks
-  const maxMiddle = pathLength - 2
-  const target = Math.min(count, maxMiddle)
-  for (let i = 1; i <= target; i += 1) {
-    const pos = Math.round((i * (pathLength - 1)) / (target + 1))
-    const bounded = clamp(pos, 1, pathLength - 2)
-    picks.add(bounded)
+
+  // Final cell is always a checkpoint in sticker mode.
+  picks.add(pathLength - 1)
+
+  const interiorTarget = Math.max(0, requested - 1)
+  if (interiorTarget > 0 && pathLength > 2) {
+    for (let i = 1; i <= interiorTarget; i += 1) {
+      const pos = Math.round((i * (pathLength - 1)) / (interiorTarget + 1))
+      const bounded = clamp(pos, 1, pathLength - 2)
+      picks.add(bounded)
+    }
   }
-  return picks
+
+  return Array.from(picks).sort((a, b) => a - b).slice(0, requested)
 }
 
-export function generatePuzzle(config: Config, seedCode: string): Puzzle {
+export function generatePuzzle(config: Config, seedCode: string, checkpointCount = 0): Puzzle {
   const nodes = config.operations + 1
   const side = clamp(Math.ceil(Math.sqrt(nodes / 0.7)), 4, 16)
   const rows = side
@@ -151,7 +158,7 @@ export function generatePuzzle(config: Config, seedCode: string): Puzzle {
 
   const path = bestPath.slice(0, Math.min(nodes, bestPath.length))
   const tier = TIERS[config.tier]
-  const startValue = clamp(Math.floor(rng() * (tier.max - tier.min + 1)) + tier.min, 1, 5000)
+  const startValue = 1
 
   const edges: Edge[] = []
   let running = startValue
@@ -169,6 +176,30 @@ export function generatePuzzle(config: Config, seedCode: string): Puzzle {
   const operandUse = new Map<string, number>()
   const resultUse = new Map<number, number>()
 
+  const candidatesLength = (opKey: Op, value: number) => {
+    if (opKey === '+') {
+      const plusMax = Math.min(tier.max, MAX_RESULT - value)
+      const plusMin = Math.min(tier.min, plusMax)
+      return Math.max(0, plusMax - plusMin + 1)
+    }
+    if (opKey === '-') {
+      const safeMax = Math.min(tier.max, Math.max(tier.min, value - MIN_RESULT))
+      const safeMin = Math.min(tier.min, safeMax)
+      return Math.max(0, safeMax - safeMin + 1)
+    }
+    if (opKey === 'x') {
+      return [2, 3, 4, 5, 6, 7, 8, 9].filter((factor) => value * factor <= MAX_RESULT).length
+    }
+    let c = 0
+    for (let d = 2; d <= 12; d += 1) {
+      if (value % d === 0) {
+        const q = value / d
+        if (q >= MIN_RESULT && q <= MAX_RESULT) c += 1
+      }
+    }
+    return c
+  }
+
   const pickDiverse = (opKey: Op, candidates: number[], mkNext: (operand: number) => number) => {
     if (candidates.length === 0) return undefined
     let bestOperand = candidates[0]
@@ -183,16 +214,9 @@ export function generatePuzzle(config: Config, seedCode: string): Puzzle {
       const resultSeen = (resultUse.get(nextVal) ?? 0) * 2
       const jitter = rng() * 0.25
       const lowFactorPenalty =
-        candidates.length > 1 && operand === 2 && (opKey === 'x' || opKey === '/')
-          ? 2.5
-          : 0
+        candidates.length > 1 && operand === 2 && (opKey === 'x' || opKey === '/') ? 2.5 : 0
       const score =
-        recentOperandPenalty +
-        recentResultPenalty +
-        operandSeen +
-        resultSeen +
-        lowFactorPenalty +
-        jitter
+        recentOperandPenalty + recentResultPenalty + operandSeen + resultSeen + lowFactorPenalty + jitter
       if (score < bestScore) {
         bestScore = score
         bestOperand = operand
@@ -210,16 +234,9 @@ export function generatePuzzle(config: Config, seedCode: string): Puzzle {
       const operandSeen = (operandUse.get(opOperandKey) ?? 0) * 1.5
       const resultSeen = (resultUse.get(nextVal) ?? 0) * 2
       const lowFactorPenalty =
-        opKey !== '+' && candidatesLength(opKey, value) > 1 && operand === 2
-          ? 2.5
-          : 0
+        opKey !== '+' && candidatesLength(opKey, value) > 1 && operand === 2 ? 2.5 : 0
       const score =
-        recentOperandPenalty +
-        recentResultPenalty +
-        operandSeen +
-        resultSeen +
-        lowFactorPenalty +
-        rng() * 0.25
+        recentOperandPenalty + recentResultPenalty + operandSeen + resultSeen + lowFactorPenalty + rng() * 0.25
       return score
     }
 
@@ -253,8 +270,7 @@ export function generatePuzzle(config: Config, seedCode: string): Puzzle {
       const factors = [2, 3, 4, 5, 6, 7, 8, 9].filter((factor) => value * factor <= MAX_RESULT)
       if (factors.length === 0) return undefined
       const operand =
-        pickDiverse(opKey, factors, (n) => value * n) ??
-        factors[Math.floor(rng() * factors.length)]
+        pickDiverse(opKey, factors, (n) => value * n) ?? factors[Math.floor(rng() * factors.length)]
       const next = value * operand
       return { operand, next, score: scoreCandidate(operand, next) }
     }
@@ -268,34 +284,9 @@ export function generatePuzzle(config: Config, seedCode: string): Puzzle {
     }
     if (divisors.length === 0) return undefined
     const operand =
-      pickDiverse(opKey, divisors, (n) => value / n) ??
-      divisors[Math.floor(rng() * divisors.length)]
+      pickDiverse(opKey, divisors, (n) => value / n) ?? divisors[Math.floor(rng() * divisors.length)]
     const next = value / operand
     return { operand, next, score: scoreCandidate(operand, next) }
-  }
-
-  const candidatesLength = (opKey: Op, value: number) => {
-    if (opKey === '+') {
-      const plusMax = Math.min(tier.max, MAX_RESULT - value)
-      const plusMin = Math.min(tier.min, plusMax)
-      return Math.max(0, plusMax - plusMin + 1)
-    }
-    if (opKey === '-') {
-      const safeMax = Math.min(tier.max, Math.max(tier.min, value - MIN_RESULT))
-      const safeMin = Math.min(tier.min, safeMax)
-      return Math.max(0, safeMax - safeMin + 1)
-    }
-    if (opKey === 'x') {
-      return [2, 3, 4, 5, 6, 7, 8, 9].filter((factor) => value * factor <= MAX_RESULT).length
-    }
-    let c = 0
-    for (let d = 2; d <= 12; d += 1) {
-      if (value % d === 0) {
-        const q = value / d
-        if (q >= MIN_RESULT && q <= MAX_RESULT) c += 1
-      }
-    }
-    return c
   }
 
   const isOpValid = (op: Op, value: number) => {
@@ -316,8 +307,7 @@ export function generatePuzzle(config: Config, seedCode: string): Puzzle {
     const allowedFallback = simplerOrEqualToDesired.filter((op) => isOpValid(op, running))
     const recentTail = recentOperandKeys.slice(-5)
     const twoLoopCount = recentTail.filter((k) => k === 'x:2' || k === '/:2').length
-    const xDivOnlySelection =
-      config.ops.length > 0 && config.ops.every((op) => op === 'x' || op === '/')
+    const xDivOnlySelection = config.ops.length > 0 && config.ops.every((op) => op === 'x' || op === '/')
     const loopLockActive = xDivOnlySelection && twoLoopCount >= 4
 
     const basePool =
@@ -329,9 +319,10 @@ export function generatePuzzle(config: Config, seedCode: string): Puzzle {
             ? allowedFallback
             : (['+'] as Op[])
     const breakerPool = (['+', '-'] as Op[]).filter((op) => isOpValid(op, running))
-    const opsPool = loopLockActive && breakerPool.length > 0
-      ? Array.from(new Set<Op>([...basePool, ...breakerPool]))
-      : basePool
+    const opsPool =
+      loopLockActive && breakerPool.length > 0
+        ? Array.from(new Set<Op>([...basePool, ...breakerPool]))
+        : basePool
 
     const candidates = opsPool
       .map((candidateOp) => {
@@ -349,7 +340,8 @@ export function generatePuzzle(config: Config, seedCode: string): Puzzle {
       .filter((x): x is { op: Op; operand: number; next: number; score: number; totalScore: number } => !!x)
 
     if (candidates.length === 0) {
-      const backupOperand = Math.max(1, Math.floor(rng() * Math.max(1, Math.min(tier.max, MAX_RESULT - running))) + 1)
+      const backupOperand =
+        Math.max(1, Math.floor(rng() * Math.max(1, Math.min(tier.max, MAX_RESULT - running))) + 1)
       const backupResult = running + backupOperand
       edges.push({ from: path[i], to: path[i + 1], op: '+', operand: backupOperand, result: backupResult })
       const usedKey = `+:${backupOperand}`
@@ -370,7 +362,8 @@ export function generatePuzzle(config: Config, seedCode: string): Puzzle {
     const next = picked.next
 
     if (next <= 0 || next > MAX_RESULT) {
-      const backupOperand = Math.max(1, Math.floor(rng() * Math.max(1, Math.min(tier.max, MAX_RESULT - running))) + 1)
+      const backupOperand =
+        Math.max(1, Math.floor(rng() * Math.max(1, Math.min(tier.max, MAX_RESULT - running))) + 1)
       const backupResult = running + backupOperand
       edges.push({ from: path[i], to: path[i + 1], op: '+', operand: backupOperand, result: backupResult })
       const usedKey = `+:${backupOperand}`
@@ -395,16 +388,8 @@ export function generatePuzzle(config: Config, seedCode: string): Puzzle {
     running = next
   }
 
-  const shownIndices = chooseEvenlyDistributed(path.length, config.selfChecks)
-  const shownValues: Record<number, number> = { 0: startValue }
-  let value = startValue
-  edges.forEach((edge, edgeIdx) => {
-    value = edge.result
-    const pathIdx = edgeIdx + 1
-    if (pathIdx === path.length - 1 || shownIndices.has(pathIdx)) {
-      shownValues[pathIdx] = value
-    }
-  })
+  const pathValues = [startValue]
+  for (const edge of edges) pathValues.push(edge.result)
 
   const cells: Cell[] = []
   for (let row = 0; row < rows; row += 1) {
@@ -413,5 +398,17 @@ export function generatePuzzle(config: Config, seedCode: string): Puzzle {
     }
   }
 
-  return { cols, rows, cells, path, edges, startValue, finalValue: value, shownValues }
+  const checkpointPathIndices = pickCheckpointIndices(path.length, checkpointCount)
+
+  return {
+    cols,
+    rows,
+    cells,
+    path,
+    edges,
+    startValue,
+    finalValue: running,
+    pathValues,
+    checkpointPathIndices,
+  }
 }

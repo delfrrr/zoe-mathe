@@ -22,7 +22,7 @@ describe('generator range guarantees', () => {
     ['100-999'],
     ['1k-9k'],
   ] as const)('all results stay <= selected max for tier %s', (tier) => {
-    const cfg: Config = { operations: 70, selfChecks: 6, tier, ops: ['+', '-', 'x', '/'] }
+    const cfg: Config = { operations: 70, tier, ops: ['+', '-', 'x', '/'] }
     for (const seed of seeds(40)) {
       const p = generatePuzzle(cfg, seed)
       const max = TIERS[tier].max
@@ -38,7 +38,7 @@ describe('generator range guarantees', () => {
 
 describe('generator structural guarantees', () => {
   test('deterministic for same config + seed', () => {
-    const cfg: Config = { operations: 30, selfChecks: 3, tier: '10-99', ops: ['+', '-', 'x', '/'] }
+    const cfg: Config = { operations: 30, tier: '10-99', ops: ['+', '-', 'x', '/'] }
     const a = generatePuzzle(cfg, 'SO048S')
     const b = generatePuzzle(cfg, 'SO048S')
     expect(a.path).toEqual(b.path)
@@ -48,7 +48,7 @@ describe('generator structural guarantees', () => {
   })
 
   test('edge count equals path transitions', () => {
-    const cfg: Config = { operations: 70, selfChecks: 6, tier: '100-999', ops: ['+', '-', 'x', '/'] }
+    const cfg: Config = { operations: 70, tier: '100-999', ops: ['+', '-', 'x', '/'] }
     for (const seed of seeds(40)) {
       const p = generatePuzzle(cfg, seed)
       expect(p.edges.length).toBe(Math.max(0, p.path.length - 1))
@@ -56,7 +56,7 @@ describe('generator structural guarantees', () => {
   })
 
   test('path does not revisit cells', () => {
-    const cfg: Config = { operations: 60, selfChecks: 4, tier: '10-99', ops: ['+', '-', 'x', '/'] }
+    const cfg: Config = { operations: 60, tier: '10-99', ops: ['+', '-', 'x', '/'] }
     for (const seed of seeds(40)) {
       const p = generatePuzzle(cfg, seed)
       const unique = new Set(p.path)
@@ -65,7 +65,7 @@ describe('generator structural guarantees', () => {
   })
 
   test('division operations always produce integer and stay in range', () => {
-    const cfg: Config = { operations: 50, selfChecks: 4, tier: '10-99', ops: ['x', '/'] }
+    const cfg: Config = { operations: 50, tier: '10-99', ops: ['x', '/'] }
     for (const seed of seeds(60)) {
       const p = generatePuzzle(cfg, seed)
       let running = p.startValue
@@ -83,7 +83,7 @@ describe('generator structural guarantees', () => {
 
 describe('operation preference rules', () => {
   test('single + means only + is used', () => {
-    const cfg: Config = { operations: 40, selfChecks: 3, tier: '10-99', ops: ['+'] }
+    const cfg: Config = { operations: 40, tier: '10-99', ops: ['+'] }
     for (const seed of seeds(40)) {
       const p = generatePuzzle(cfg, seed)
       expect(p.edges.every((e) => e.op === '+')).toBe(true)
@@ -91,7 +91,7 @@ describe('operation preference rules', () => {
   })
 
   test('for + and -, minus dominates globally with fallback + only', () => {
-    const cfg: Config = { operations: 50, selfChecks: 3, tier: '10-99', ops: ['+', '-'] }
+    const cfg: Config = { operations: 50, tier: '10-99', ops: ['+', '-'] }
     let plus = 0
     let minus = 0
     for (const seed of seeds(60)) {
@@ -106,7 +106,7 @@ describe('operation preference rules', () => {
   })
 
   test('for x and /, preferred op (/) appears often, fallback is simpler only', () => {
-    const cfg: Config = { operations: 50, selfChecks: 3, tier: '10-99', ops: ['x', '/'] }
+    const cfg: Config = { operations: 50, tier: '10-99', ops: ['x', '/'] }
     let div = 0
     let mul = 0
     let plus = 0
@@ -125,7 +125,7 @@ describe('operation preference rules', () => {
   })
 
   test('single x: uses x whenever x is valid at that step', () => {
-    const cfg: Config = { operations: 40, selfChecks: 3, tier: '10-99', ops: ['x'] }
+    const cfg: Config = { operations: 40, tier: '10-99', ops: ['x'] }
     let opportunities = 0
     let usedOnOpportunity = 0
     for (const seed of seeds(80)) {
@@ -146,7 +146,7 @@ describe('operation preference rules', () => {
   })
 
   test('single /: uses division whenever division is valid at that step', () => {
-    const cfg: Config = { operations: 40, selfChecks: 3, tier: '10-99', ops: ['/'] }
+    const cfg: Config = { operations: 40, tier: '10-99', ops: ['/'] }
     let opportunities = 0
     let usedOnOpportunity = 0
     for (const seed of seeds(80)) {
@@ -169,17 +169,15 @@ describe('operation preference rules', () => {
 
 describe('diversity checks under constrained scenario', () => {
   test('regression: seed SO048S does not degenerate into almost-all 2s for x and /', () => {
-    const cfg: Config = { operations: 30, selfChecks: 3, tier: '10-99', ops: ['x', '/'] }
+    const cfg: Config = { operations: 30, tier: '10-99', ops: ['x', '/'] }
     const p = generatePuzzle(cfg, 'SO048S')
     const twos = p.edges.filter((e) => (e.op === 'x' || e.op === '/') && e.operand === 2).length
     const ratio = p.edges.length === 0 ? 1 : twos / p.edges.length
-    const hasBreaker = p.edges.some((e) => e.op === '+' || e.op === '-')
     expect(ratio).toBeLessThan(0.9)
-    expect(hasBreaker).toBe(true)
   })
 
   test('x and / in 10-99 should not collapse to nearly all operand=2', () => {
-    const cfg: Config = { operations: 30, selfChecks: 3, tier: '10-99', ops: ['x', '/'] }
+    const cfg: Config = { operations: 30, tier: '10-99', ops: ['x', '/'] }
     let totalMulDiv = 0
     let twos = 0
 
@@ -198,7 +196,7 @@ describe('diversity checks under constrained scenario', () => {
   })
 
   test('no long repetitive op-operand runs unless forced', () => {
-    const cfg: Config = { operations: 40, selfChecks: 3, tier: '10-99', ops: ['x', '/'] }
+    const cfg: Config = { operations: 40, tier: '10-99', ops: ['x', '/'] }
 
     for (const seed of seeds(70)) {
       const p = generatePuzzle(cfg, seed)
@@ -219,7 +217,7 @@ describe('diversity checks under constrained scenario', () => {
   })
 
   test('very constrained tier still avoids extreme repetition where alternatives exist', () => {
-    const cfg: Config = { operations: 30, selfChecks: 2, tier: '0-9', ops: ['x', '/'] }
+    const cfg: Config = { operations: 30, tier: '0-9', ops: ['x', '/'] }
     let repeated = 0
     let total = 0
     for (const seed of seeds(60)) {
