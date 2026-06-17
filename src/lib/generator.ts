@@ -35,6 +35,16 @@ export const TIERS: Record<TierKey, { min: number; max: number; label: string }>
   '1k-9k': { min: 1000, max: 9000, label: '1k-9k' },
 }
 
+function range(min: number, max: number) {
+  return Array.from({ length: max - min + 1 }, (_, i) => min + i)
+}
+
+function tableOperandsForTier(tierKey: TierKey) {
+  if (tierKey === '100-999') return range(10, 99)
+  if (tierKey === '1k-9k') return range(2, 999)
+  return range(2, 9)
+}
+
 function mulberry32(seed: number) {
   let t = seed >>> 0
   return () => {
@@ -167,6 +177,7 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
   const complexityRank: Record<Op, number> = { '+': 0, '-': 1, x: 2, '/': 3 }
   const selectedSorted = [...config.ops].sort((a, b) => complexityRank[a] - complexityRank[b])
   const desiredOp = selectedSorted[selectedSorted.length - 1]
+  const tableOperands = tableOperandsForTier(config.tier)
   const simplerOrEqualToDesired = (['+', '-', 'x', '/'] as Op[]).filter(
     (op) => complexityRank[op] <= complexityRank[desiredOp],
   )
@@ -175,32 +186,14 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
   const recentResults: number[] = []
   const operandUse = new Map<string, number>()
   const resultUse = new Map<number, number>()
+  const tableOperandUse = new Map<number, number>()
 
-  const candidatesLength = (opKey: Op, value: number) => {
-    if (opKey === '+') {
-      const plusMax = Math.min(tier.max, MAX_RESULT - value)
-      const plusMin = Math.min(tier.min, plusMax)
-      return Math.max(0, plusMax - plusMin + 1)
-    }
-    if (opKey === '-') {
-      const safeMax = Math.min(tier.max, Math.max(tier.min, value - MIN_RESULT))
-      const safeMin = Math.min(tier.min, safeMax)
-      return Math.max(0, safeMax - safeMin + 1)
-    }
-    if (opKey === 'x') {
-      return [2, 3, 4, 5, 6, 7, 8, 9].filter((factor) => value * factor <= MAX_RESULT).length
-    }
-    let c = 0
-    for (let d = 2; d <= 12; d += 1) {
-      if (value % d === 0) {
-        const q = value / d
-        if (q >= MIN_RESULT && q <= MAX_RESULT) c += 1
-      }
-    }
-    return c
-  }
-
-  const pickDiverse = (opKey: Op, candidates: number[], mkNext: (operand: number) => number) => {
+  const pickDiverse = (
+    opKey: Op,
+    value: number,
+    candidates: number[],
+    mkNext: (operand: number) => number,
+  ) => {
     if (candidates.length === 0) return undefined
     let bestOperand = candidates[0]
     let bestScore = Number.POSITIVE_INFINITY
@@ -208,15 +201,27 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
     for (const operand of candidates) {
       const nextVal = mkNext(operand)
       const opOperandKey = `${opKey}:${operand}`
+      const previousEdge = edges[edges.length - 1]
       const recentOperandPenalty = recentOperandKeys.includes(opOperandKey) ? 12 : 0
       const recentResultPenalty = recentResults.includes(nextVal) ? 10 : 0
       const operandSeen = (operandUse.get(opOperandKey) ?? 0) * 1.5
       const resultSeen = (resultUse.get(nextVal) ?? 0) * 2
+      const tableOperandSeen = opKey === 'x' || opKey === '/' ? (tableOperandUse.get(operand) ?? 0) * 1.25 : 0
+      const identityPenalty = isTrivialStep(opKey, nextVal, value, operand) ? 80 : 0
+      const inversePenalty = previousEdge && isImmediateInverse(previousEdge, opKey, operand) ? 90 : 0
       const jitter = rng() * 0.25
       const lowFactorPenalty =
         candidates.length > 1 && operand === 2 && (opKey === 'x' || opKey === '/') ? 2.5 : 0
       const score =
-        recentOperandPenalty + recentResultPenalty + operandSeen + resultSeen + lowFactorPenalty + jitter
+        recentOperandPenalty +
+        recentResultPenalty +
+        operandSeen +
+        resultSeen +
+        tableOperandSeen +
+        identityPenalty +
+        inversePenalty +
+        lowFactorPenalty +
+        jitter
       if (score < bestScore) {
         bestScore = score
         bestOperand = operand
@@ -226,17 +231,52 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
     return bestOperand
   }
 
+  const isImmediateInverse = (previousEdge: Edge, opKey: Op, operand: number) => {
+    if (previousEdge.operand !== operand) return false
+    return (
+      (previousEdge.op === 'x' && opKey === '/') ||
+      (previousEdge.op === '/' && opKey === 'x') ||
+      (previousEdge.op === '+' && opKey === '-') ||
+      (previousEdge.op === '-' && opKey === '+')
+    )
+  }
+
+  const isTrivialStep = (opKey: Op, nextVal: number, value: number, operand: number) => {
+    if (operand === 0 || operand === 1) return true
+    if (opKey === '/' && value === operand && nextVal === 1) return true
+    return false
+  }
+
+  const isImmediateCancellation = (previousEdge: Edge | undefined, opKey: Op, operand: number) => {
+    if (!previousEdge || previousEdge.op !== 'x' || opKey !== '/') return false
+    const previousInput = previousEdge.result / previousEdge.operand
+    return operand === previousInput || operand === previousEdge.operand
+  }
+
   const bestForOp = (opKey: Op, value: number) => {
-    const scoreCandidate = (operand: number, nextVal: number) => {
+    const scoreCandidate = (operand: number, nextVal: number, candidateCount: number) => {
       const opOperandKey = `${opKey}:${operand}`
+      const previousEdge = edges[edges.length - 1]
       const recentOperandPenalty = recentOperandKeys.includes(opOperandKey) ? 12 : 0
       const recentResultPenalty = recentResults.includes(nextVal) ? 10 : 0
       const operandSeen = (operandUse.get(opOperandKey) ?? 0) * 1.5
       const resultSeen = (resultUse.get(nextVal) ?? 0) * 2
-      const lowFactorPenalty =
-        opKey !== '+' && candidatesLength(opKey, value) > 1 && operand === 2 ? 2.5 : 0
+      const tableOperandSeen = opKey === 'x' || opKey === '/' ? (tableOperandUse.get(operand) ?? 0) * 1.25 : 0
+      const identityPenalty = isTrivialStep(opKey, nextVal, value, operand) ? 80 : 0
+      const inversePenalty = previousEdge && isImmediateInverse(previousEdge, opKey, operand) ? 90 : 0
+      const cancellationPenalty = isImmediateCancellation(previousEdge, opKey, operand) ? 90 : 0
+      const lowFactorPenalty = opKey !== '+' && candidateCount > 1 && operand === 2 ? 2.5 : 0
       const score =
-        recentOperandPenalty + recentResultPenalty + operandSeen + resultSeen + lowFactorPenalty + rng() * 0.25
+        recentOperandPenalty +
+        recentResultPenalty +
+        operandSeen +
+        resultSeen +
+        tableOperandSeen +
+        identityPenalty +
+        inversePenalty +
+        cancellationPenalty +
+        lowFactorPenalty +
+        rng() * 0.25
       return score
     }
 
@@ -244,59 +284,72 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
       const plusMax = Math.min(tier.max, MAX_RESULT - value)
       const plusMin = Math.min(tier.min, plusMax)
       const plusCandidates: number[] = []
-      for (let n = plusMin; n <= plusMax; n += 1) plusCandidates.push(n)
+      for (let n = Math.max(1, plusMin); n <= plusMax; n += 1) plusCandidates.push(n)
       if (plusCandidates.length === 0) return undefined
       const operand =
-        pickDiverse(opKey, plusCandidates, (n) => value + n) ??
+        pickDiverse(opKey, value, plusCandidates, (n) => value + n) ??
         plusCandidates[Math.floor(rng() * plusCandidates.length)]
       const next = value + operand
-      return { operand, next, score: scoreCandidate(operand, next) }
+      return { operand, next, score: scoreCandidate(operand, next, plusCandidates.length) }
     }
 
     if (opKey === '-') {
-      const safeMax = Math.min(tier.max, Math.max(tier.min, value - MIN_RESULT))
-      const safeMin = Math.min(tier.min, safeMax)
+      const safeMin = Math.max(1, tier.min)
+      const safeMax = Math.min(tier.max, value - MIN_RESULT)
       const minusCandidates: number[] = []
       for (let n = safeMin; n <= safeMax; n += 1) minusCandidates.push(n)
       if (minusCandidates.length === 0) return undefined
       const operand =
-        pickDiverse(opKey, minusCandidates, (n) => value - n) ??
+        pickDiverse(opKey, value, minusCandidates, (n) => value - n) ??
         minusCandidates[Math.floor(rng() * minusCandidates.length)]
       const next = value - operand
-      return { operand, next, score: scoreCandidate(operand, next) }
+      return { operand, next, score: scoreCandidate(operand, next, minusCandidates.length) }
     }
 
     if (opKey === 'x') {
-      const factors = [2, 3, 4, 5, 6, 7, 8, 9].filter((factor) => value * factor <= MAX_RESULT)
+      const factors = tableOperands.filter((factor) => value * factor <= MAX_RESULT)
       if (factors.length === 0) return undefined
       const operand =
-        pickDiverse(opKey, factors, (n) => value * n) ?? factors[Math.floor(rng() * factors.length)]
+        pickDiverse(opKey, value, factors, (n) => value * n) ?? factors[Math.floor(rng() * factors.length)]
       const next = value * operand
-      return { operand, next, score: scoreCandidate(operand, next) }
+      return { operand, next, score: scoreCandidate(operand, next, factors.length) }
     }
 
     const divisors: number[] = []
-    for (let d = 2; d <= 12; d += 1) {
+    for (const d of tableOperands) {
       if (value % d === 0) {
         const quotient = value / d
         if (quotient >= MIN_RESULT && quotient <= MAX_RESULT) divisors.push(d)
       }
     }
-    if (divisors.length === 0) return undefined
+    const previousEdge = edges[edges.length - 1]
+    const usableDivisors = divisors.filter(
+      (d) => !isTrivialStep('/', value / d, value, d) && !isImmediateCancellation(previousEdge, '/', d),
+    )
+    if (usableDivisors.length === 0) return undefined
     const operand =
-      pickDiverse(opKey, divisors, (n) => value / n) ?? divisors[Math.floor(rng() * divisors.length)]
+      pickDiverse(opKey, value, usableDivisors, (n) => value / n) ??
+      usableDivisors[Math.floor(rng() * usableDivisors.length)]
     const next = value / operand
-    return { operand, next, score: scoreCandidate(operand, next) }
+    return { operand, next, score: scoreCandidate(operand, next, usableDivisors.length) }
   }
 
   const isOpValid = (op: Op, value: number) => {
     if (op === '+') return value < MAX_RESULT
-    if (op === '-') return value - tier.min >= MIN_RESULT
+    if (op === '-') return Math.min(tier.max, value - MIN_RESULT) >= Math.max(1, tier.min)
     if (op === 'x') return value >= MIN_RESULT && value * 2 <= MAX_RESULT
-    for (let d = 2; d <= 12; d += 1) {
+    const previousEdge = edges[edges.length - 1]
+    for (const d of tableOperands) {
       if (value % d === 0) {
         const next = value / d
-        if (next >= MIN_RESULT && next <= MAX_RESULT) return true
+        if (
+          next >= MIN_RESULT &&
+          next <= MAX_RESULT &&
+          !isTrivialStep('/', next, value, d) &&
+          !isImmediateCancellation(previousEdge, '/', d)
+        ) {
+          return true
+        }
       }
     }
     return false
@@ -305,10 +358,8 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
   for (let i = 0; i < path.length - 1; i += 1) {
     const selectedValid = selectedSorted.filter((op) => isOpValid(op, running))
     const allowedFallback = simplerOrEqualToDesired.filter((op) => isOpValid(op, running))
-    const recentTail = recentOperandKeys.slice(-5)
-    const twoLoopCount = recentTail.filter((k) => k === 'x:2' || k === '/:2').length
-    const xDivOnlySelection = config.ops.length > 0 && config.ops.every((op) => op === 'x' || op === '/')
-    const loopLockActive = xDivOnlySelection && twoLoopCount >= 4
+    const xDivOnlySelection =
+      config.ops.includes('x') && config.ops.includes('/') && config.ops.every((op) => op === 'x' || op === '/')
 
     const basePool =
       config.ops.length === 1 && config.ops[0] === '+'
@@ -319,19 +370,19 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
             ? allowedFallback
             : (['+'] as Op[])
     const breakerPool = (['+', '-'] as Op[]).filter((op) => isOpValid(op, running))
-    const opsPool =
-      loopLockActive && breakerPool.length > 0
-        ? Array.from(new Set<Op>([...basePool, ...breakerPool]))
-        : basePool
+    const opsPool = xDivOnlySelection ? Array.from(new Set<Op>([...basePool, ...breakerPool])) : basePool
 
     const candidates = opsPool
       .map((candidateOp) => {
         const choice = bestForOp(candidateOp, running)
         if (!choice) return undefined
         let preferenceBias = 0
-        if (loopLockActive) {
-          if (candidateOp === '+' || candidateOp === '-') preferenceBias -= 6
-          if ((candidateOp === 'x' || candidateOp === '/') && choice.operand === 2) preferenceBias += 8
+        if (xDivOnlySelection) {
+          if (candidateOp === '+' || candidateOp === '-') preferenceBias += 2
+          if (isTrivialStep(candidateOp, choice.next, running, choice.operand)) preferenceBias += 60
+          if (edges.length > 0 && isImmediateInverse(edges[edges.length - 1], candidateOp, choice.operand)) {
+            preferenceBias += 70
+          }
         }
         if (candidateOp === desiredOp) preferenceBias -= 3
         else preferenceBias += 1 + (complexityRank[desiredOp] - complexityRank[candidateOp]) * 0.6
@@ -380,6 +431,7 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
     edges.push({ from: path[i], to: path[i + 1], op, operand, result: next })
     const usedKey = `${op}:${operand}`
     operandUse.set(usedKey, (operandUse.get(usedKey) ?? 0) + 1)
+    if (op === 'x' || op === '/') tableOperandUse.set(operand, (tableOperandUse.get(operand) ?? 0) + 1)
     resultUse.set(next, (resultUse.get(next) ?? 0) + 1)
     recentOperandKeys.push(usedKey)
     recentResults.push(next)
