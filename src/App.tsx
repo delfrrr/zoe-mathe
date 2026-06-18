@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { TIERS, generatePuzzle, type Config, type Op, type Puzzle, type TierKey } from './lib/generator'
+import {
+  TIERS,
+  generatePuzzle,
+  type Config,
+  type Op,
+  type Puzzle,
+  type TierKey,
+} from './lib/generator'
 import './App.css'
 
 type UiConfig = Config & {
@@ -7,11 +14,15 @@ type UiConfig = Config & {
   showSolutions: boolean
 }
 
+type PresetConfig = Omit<Config, 'operations'> & {
+  operations?: number
+}
+
 type Preset = {
-  key: 'starter' | 'standard' | 'expert'
+  key: 'starter' | 'standard' | 'expert' | 'tables'
   label: string
   meta: string
-  config: Config
+  config: PresetConfig
 }
 
 const PRESETS: Preset[] = [
@@ -32,6 +43,12 @@ const PRESETS: Preset[] = [
     label: 'Expert',
     meta: '70 ops · 100-999 · +-x/',
     config: { operations: 70, tier: '100-999', ops: ['+', '-', 'x', '/'] },
+  },
+  {
+    key: 'tables',
+    label: 'Tables',
+    meta: 'current ops · 2-9 · x/',
+    config: { tier: '10-99', ops: ['x', '/'], drillMode: 'multiplication-table' },
   },
 ]
 
@@ -293,7 +310,9 @@ function PuzzleSVG({ puzzle, showAnswers, stickerMode }: { puzzle: Puzzle; showA
 function App() {
   const [activePreset, setActivePreset] = useState<Preset['key']>('standard')
   const [config, setConfig] = useState<UiConfig>({
-    ...PRESETS[1].config,
+    operations: 40,
+    tier: '10-99',
+    ops: ['+', '-'],
     stickerMode: true,
     showSolutions: false,
   })
@@ -305,8 +324,13 @@ function App() {
   })
 
   const coreConfig: Config = useMemo(
-    () => ({ operations: config.operations, tier: config.tier, ops: config.ops }),
-    [config.operations, config.tier, config.ops],
+    () => ({
+      operations: config.operations,
+      tier: config.tier,
+      ops: config.ops,
+      ...(config.drillMode ? { drillMode: config.drillMode } : {}),
+    }),
+    [config.operations, config.tier, config.ops, config.drillMode],
   )
 
   const puzzle = useMemo(
@@ -344,7 +368,12 @@ function App() {
 
   const applyPreset = (preset: Preset) => {
     setActivePreset(preset.key)
-    setConfig((prev) => ({ ...prev, ...preset.config }))
+    setConfig((prev) => ({
+      ...prev,
+      ...preset.config,
+      operations: preset.config.operations ?? prev.operations,
+      drillMode: preset.config.drillMode,
+    }))
   }
 
   const updateOps = (op: Op) => {
@@ -353,7 +382,7 @@ function App() {
       const has = prev.ops.includes(op)
       if (has && prev.ops.length === 1) return prev
       const nextOps = has ? prev.ops.filter((o) => o !== op) : [...prev.ops, op]
-      return { ...prev, ops: nextOps }
+      return { ...prev, ops: nextOps, drillMode: undefined }
     })
   }
 
@@ -402,7 +431,7 @@ function App() {
                 max={100}
                 value={config.operations}
                 onChange={(e) => {
-                  setActivePreset('standard')
+                  setActivePreset((preset) => (preset === 'tables' ? 'tables' : 'standard'))
                   setConfig((p) => ({ ...p, operations: Number(e.target.value) }))
                 }}
               />
@@ -460,7 +489,7 @@ function App() {
                   className={config.tier === tier ? 'seg active' : 'seg'}
                   onClick={() => {
                     setActivePreset('standard')
-                    setConfig((p) => ({ ...p, tier }))
+                    setConfig((p) => ({ ...p, tier, drillMode: undefined }))
                   }}
                 >
                   {tier}

@@ -1,10 +1,12 @@
 export type TierKey = '0-9' | '10-99' | '100-999' | '1k-9k'
 export type Op = '+' | '-' | 'x' | '/'
+export type DrillMode = 'standard' | 'multiplication-table'
 
 export type Config = {
   operations: number
   tier: TierKey
   ops: Op[]
+  drillMode?: DrillMode
 }
 
 export type Cell = { idx: number; col: number; row: number }
@@ -43,6 +45,31 @@ function tableOperandsForTier(tierKey: TierKey) {
   if (tierKey === '100-999') return range(10, 99)
   if (tierKey === '1k-9k') return range(2, 999)
   return range(2, 9)
+}
+
+const TABLE_FACTORS = range(2, 9)
+const TABLE_FACTOR_SET = new Set(TABLE_FACTORS)
+const TABLE_PRODUCTS = new Set(TABLE_FACTORS.flatMap((a) => TABLE_FACTORS.map((b) => a * b)))
+
+export function isMultiplicationTableFactor(value: number) {
+  return TABLE_FACTOR_SET.has(value)
+}
+
+export function isMultiplicationTableProduct(value: number) {
+  return TABLE_PRODUCTS.has(value)
+}
+
+export function isMultiplicationTableMultiplicationFact(left: number, right: number) {
+  return isMultiplicationTableFactor(left) && isMultiplicationTableFactor(right)
+}
+
+export function isMultiplicationTableDivisionFact(value: number, divisor: number) {
+  if (!isMultiplicationTableProduct(value) || !isMultiplicationTableFactor(divisor)) return false
+  return value % divisor === 0 && isMultiplicationTableFactor(value / divisor)
+}
+
+function tableFactKey(a: number, b: number) {
+  return `${Math.min(a, b)}x${Math.max(a, b)}`
 }
 
 function mulberry32(seed: number) {
@@ -156,7 +183,12 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
   const cols = side
 
   const seedInt = parseInt(seedCode, 36) >>> 0
-  const configHash = hashString(JSON.stringify(config))
+  const drillMode = config.drillMode ?? 'standard'
+  const hashConfig =
+    drillMode === 'standard'
+      ? { operations: config.operations, tier: config.tier, ops: config.ops }
+      : { operations: config.operations, tier: config.tier, ops: config.ops, drillMode }
+  const configHash = hashString(JSON.stringify(hashConfig))
   const rng = mulberry32(seedInt ^ configHash)
 
   let bestPath: number[] = []
@@ -168,16 +200,17 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
 
   const path = bestPath.slice(0, Math.min(nodes, bestPath.length))
   const tier = TIERS[config.tier]
-  const startValue = 1
+  const isTableDrill = drillMode === 'multiplication-table'
+  const startValue = isTableDrill ? TABLE_FACTORS[Math.floor(rng() * TABLE_FACTORS.length)] : 1
 
   const edges: Edge[] = []
   let running = startValue
   const MIN_RESULT = 1
-  const MAX_RESULT = tier.max
+  const MAX_RESULT = isTableDrill ? 81 : tier.max
   const complexityRank: Record<Op, number> = { '+': 0, '-': 1, x: 2, '/': 3 }
   const selectedSorted = [...config.ops].sort((a, b) => complexityRank[a] - complexityRank[b])
   const desiredOp = selectedSorted[selectedSorted.length - 1]
-  const tableOperands = tableOperandsForTier(config.tier)
+  const tableOperands = isTableDrill ? TABLE_FACTORS : tableOperandsForTier(config.tier)
   const simplerOrEqualToDesired = (['+', '-', 'x', '/'] as Op[]).filter(
     (op) => complexityRank[op] <= complexityRank[desiredOp],
   )
@@ -187,6 +220,24 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
   const operandUse = new Map<string, number>()
   const resultUse = new Map<number, number>()
   const tableOperandUse = new Map<number, number>()
+  const tableFactUse = new Map<string, number>()
+  const tableProductUse = new Map<number, number>()
+
+  const tableFactFor = (opKey: Op, value: number, operand: number, nextVal: number) => {
+    if (!isTableDrill || (opKey !== 'x' && opKey !== '/')) return undefined
+    if (opKey === 'x') {
+      if (!isMultiplicationTableMultiplicationFact(value, operand)) return undefined
+      return { key: tableFactKey(value, operand), product: nextVal }
+    }
+    if (!isMultiplicationTableDivisionFact(value, operand)) return undefined
+    return { key: tableFactKey(operand, nextVal), product: value }
+  }
+
+  const hasAlternateTableDivision = (product: number, blockedA: number, blockedB: number) =>
+    TABLE_FACTORS.some((factor) => {
+      if (factor === blockedA || factor === blockedB) return false
+      return isMultiplicationTableDivisionFact(product, factor)
+    })
 
   const pickDiverse = (
     opKey: Op,
@@ -207,6 +258,15 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
       const operandSeen = (operandUse.get(opOperandKey) ?? 0) * 1.5
       const resultSeen = (resultUse.get(nextVal) ?? 0) * 2
       const tableOperandSeen = opKey === 'x' || opKey === '/' ? (tableOperandUse.get(operand) ?? 0) * 1.25 : 0
+      const tableFact = tableFactFor(opKey, value, operand, nextVal)
+      const tableFactSeen = tableFact ? (tableFactUse.get(tableFact.key) ?? 0) * 14 : 0
+      const tableProductSeen = tableFact ? (tableProductUse.get(tableFact.product) ?? 0) * 4 : 0
+      const deadEndProductPenalty =
+        isTableDrill && opKey === 'x' && !hasAlternateTableDivision(nextVal, value, operand) ? 18 : 0
+      const offTableEscapePenalty =
+        isTableDrill && (opKey === '+' || opKey === '-') && !isMultiplicationTableFactor(nextVal) && !isMultiplicationTableProduct(nextVal)
+          ? 30
+          : 0
       const identityPenalty = isTrivialStep(opKey, nextVal, value, operand) ? 80 : 0
       const inversePenalty = previousEdge && isImmediateInverse(previousEdge, opKey, operand) ? 90 : 0
       const jitter = rng() * 0.25
@@ -218,6 +278,10 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
         operandSeen +
         resultSeen +
         tableOperandSeen +
+        tableFactSeen +
+        tableProductSeen +
+        deadEndProductPenalty +
+        offTableEscapePenalty +
         identityPenalty +
         inversePenalty +
         lowFactorPenalty +
@@ -262,6 +326,15 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
       const operandSeen = (operandUse.get(opOperandKey) ?? 0) * 1.5
       const resultSeen = (resultUse.get(nextVal) ?? 0) * 2
       const tableOperandSeen = opKey === 'x' || opKey === '/' ? (tableOperandUse.get(operand) ?? 0) * 1.25 : 0
+      const tableFact = tableFactFor(opKey, value, operand, nextVal)
+      const tableFactSeen = tableFact ? (tableFactUse.get(tableFact.key) ?? 0) * 14 : 0
+      const tableProductSeen = tableFact ? (tableProductUse.get(tableFact.product) ?? 0) * 4 : 0
+      const deadEndProductPenalty =
+        isTableDrill && opKey === 'x' && !hasAlternateTableDivision(nextVal, value, operand) ? 18 : 0
+      const offTableEscapePenalty =
+        isTableDrill && (opKey === '+' || opKey === '-') && !isMultiplicationTableFactor(nextVal) && !isMultiplicationTableProduct(nextVal)
+          ? 30
+          : 0
       const identityPenalty = isTrivialStep(opKey, nextVal, value, operand) ? 80 : 0
       const inversePenalty = previousEdge && isImmediateInverse(previousEdge, opKey, operand) ? 90 : 0
       const cancellationPenalty = isImmediateCancellation(previousEdge, opKey, operand) ? 90 : 0
@@ -272,6 +345,10 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
         operandSeen +
         resultSeen +
         tableOperandSeen +
+        tableFactSeen +
+        tableProductSeen +
+        deadEndProductPenalty +
+        offTableEscapePenalty +
         identityPenalty +
         inversePenalty +
         cancellationPenalty +
@@ -282,7 +359,7 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
 
     if (opKey === '+') {
       const plusMax = Math.min(tier.max, MAX_RESULT - value)
-      const plusMin = Math.min(tier.min, plusMax)
+      const plusMin = isTableDrill ? 1 : Math.min(tier.min, plusMax)
       const plusCandidates: number[] = []
       for (let n = Math.max(1, plusMin); n <= plusMax; n += 1) plusCandidates.push(n)
       if (plusCandidates.length === 0) return undefined
@@ -294,7 +371,7 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
     }
 
     if (opKey === '-') {
-      const safeMin = Math.max(1, tier.min)
+      const safeMin = isTableDrill ? 1 : Math.max(1, tier.min)
       const safeMax = Math.min(tier.max, value - MIN_RESULT)
       const minusCandidates: number[] = []
       for (let n = safeMin; n <= safeMax; n += 1) minusCandidates.push(n)
@@ -307,7 +384,10 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
     }
 
     if (opKey === 'x') {
-      const factors = tableOperands.filter((factor) => value * factor <= MAX_RESULT)
+      const factors = tableOperands.filter((factor) => {
+        if (isTableDrill && !isMultiplicationTableFactor(value)) return false
+        return value * factor <= MAX_RESULT
+      })
       if (factors.length === 0) return undefined
       const operand =
         pickDiverse(opKey, value, factors, (n) => value * n) ?? factors[Math.floor(rng() * factors.length)]
@@ -319,7 +399,9 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
     for (const d of tableOperands) {
       if (value % d === 0) {
         const quotient = value / d
-        if (quotient >= MIN_RESULT && quotient <= MAX_RESULT) divisors.push(d)
+        if (isTableDrill) {
+          if (isMultiplicationTableDivisionFact(value, d)) divisors.push(d)
+        } else if (quotient >= MIN_RESULT && quotient <= MAX_RESULT) divisors.push(d)
       }
     }
     const previousEdge = edges[edges.length - 1]
@@ -336,15 +418,20 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
 
   const isOpValid = (op: Op, value: number) => {
     if (op === '+') return value < MAX_RESULT
-    if (op === '-') return Math.min(tier.max, value - MIN_RESULT) >= Math.max(1, tier.min)
-    if (op === 'x') return value >= MIN_RESULT && value * 2 <= MAX_RESULT
+    if (op === '-') {
+      const minOperand = isTableDrill ? 1 : Math.max(1, tier.min)
+      return Math.min(tier.max, value - MIN_RESULT) >= minOperand
+    }
+    if (op === 'x') {
+      if (isTableDrill && !isMultiplicationTableFactor(value)) return false
+      return value >= MIN_RESULT && value * 2 <= MAX_RESULT
+    }
     const previousEdge = edges[edges.length - 1]
     for (const d of tableOperands) {
       if (value % d === 0) {
         const next = value / d
         if (
-          next >= MIN_RESULT &&
-          next <= MAX_RESULT &&
+          (isTableDrill ? isMultiplicationTableDivisionFact(value, d) : next >= MIN_RESULT && next <= MAX_RESULT) &&
           !isTrivialStep('/', next, value, d) &&
           !isImmediateCancellation(previousEdge, '/', d)
         ) {
@@ -378,7 +465,7 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
         if (!choice) return undefined
         let preferenceBias = 0
         if (xDivOnlySelection) {
-          if (candidateOp === '+' || candidateOp === '-') preferenceBias += 2
+          if (candidateOp === '+' || candidateOp === '-') preferenceBias += isTableDrill ? 80 : 2
           if (isTrivialStep(candidateOp, choice.next, running, choice.operand)) preferenceBias += 60
           if (edges.length > 0 && isImmediateInverse(edges[edges.length - 1], candidateOp, choice.operand)) {
             preferenceBias += 70
@@ -430,8 +517,13 @@ export function generatePuzzle(config: Config, seedCode: string, checkpointCount
 
     edges.push({ from: path[i], to: path[i + 1], op, operand, result: next })
     const usedKey = `${op}:${operand}`
+    const usedTableFact = tableFactFor(op, running, operand, next)
     operandUse.set(usedKey, (operandUse.get(usedKey) ?? 0) + 1)
     if (op === 'x' || op === '/') tableOperandUse.set(operand, (tableOperandUse.get(operand) ?? 0) + 1)
+    if (usedTableFact) {
+      tableFactUse.set(usedTableFact.key, (tableFactUse.get(usedTableFact.key) ?? 0) + 1)
+      tableProductUse.set(usedTableFact.product, (tableProductUse.get(usedTableFact.product) ?? 0) + 1)
+    }
     resultUse.set(next, (resultUse.get(next) ?? 0) + 1)
     recentOperandKeys.push(usedKey)
     recentResults.push(next)

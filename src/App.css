@@ -166,7 +166,7 @@ html, body {
 
 .seg.active { background: var(--bg); color: var(--fg); box-shadow: var(--shadow-sm); }
 
-.preset-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+.preset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .preset {
   appearance: none;
   border: 1px solid var(--border);

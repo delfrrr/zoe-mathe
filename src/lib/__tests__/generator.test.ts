@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'vitest'
-import { generatePuzzle, type Config, type Op, TIERS } from '../generator'
+import {
+  generatePuzzle,
+  isMultiplicationTableDivisionFact,
+  isMultiplicationTableMultiplicationFact,
+  type Config,
+  type Op,
+  TIERS,
+} from '../generator'
 
 function seeds(n: number) {
   const out: string[] = []
@@ -66,6 +73,18 @@ function possibleTableDivisor(tier: Config['tier'], value: number) {
     if (value % d === 0 && value !== d) return true
   }
   return false
+}
+
+function isClassicFactor(value: number) {
+  return value >= 2 && value <= 9
+}
+
+function classicFactKey(a: number, b: number) {
+  return `${Math.min(a, b)}x${Math.max(a, b)}`
+}
+
+function tableDrillConfig(operations = 40): Config {
+  return { operations, tier: '10-99', ops: ['x', '/'], drillMode: 'multiplication-table' }
 }
 
 describe('generator range guarantees', () => {
@@ -145,6 +164,18 @@ describe('generator structural guarantees', () => {
     const cfg: Config = { operations: 30, tier: '10-99', ops: ['+', '-', 'x', '/'] }
     const a = generatePuzzle(cfg, 'SO048S')
     const b = generatePuzzle(cfg, 'SO048S')
+    expect(a.path).toEqual(b.path)
+    expect(a.edges).toEqual(b.edges)
+    expect(a.startValue).toBe(b.startValue)
+    expect(a.finalValue).toBe(b.finalValue)
+  })
+
+  test('explicit standard drill mode preserves existing seed output', () => {
+    const omitted: Config = { operations: 30, tier: '10-99', ops: ['+', '-', 'x', '/'] }
+    const explicit: Config = { ...omitted, drillMode: 'standard' }
+    const a = generatePuzzle(omitted, 'SO048S')
+    const b = generatePuzzle(explicit, 'SO048S')
+
     expect(a.path).toEqual(b.path)
     expect(a.edges).toEqual(b.edges)
     expect(a.startValue).toBe(b.startValue)
@@ -423,5 +454,111 @@ describe('diversity checks under constrained scenario', () => {
     }
     const repeatRatio = total === 0 ? 0 : repeated / total
     expect(repeatRatio).toBeLessThan(0.55)
+  })
+})
+
+describe('multiplication table drill mode', () => {
+  test('x and / facts keep both sides inside the classic 2-9 table', () => {
+    const cfg = tableDrillConfig(50)
+
+    for (const seed of seeds(80)) {
+      const p = generatePuzzle(cfg, seed)
+
+      for (let i = 0; i < p.edges.length; i += 1) {
+        const edge = p.edges[i]
+        const input = p.pathValues[i]
+
+        expect(edge.result).toBeGreaterThan(0)
+        expect(edge.result).toBeLessThanOrEqual(81)
+
+        if (edge.op === 'x') {
+          expect(isClassicFactor(input)).toBe(true)
+          expect(isClassicFactor(edge.operand)).toBe(true)
+          expect(edge.result).toBe(input * edge.operand)
+        }
+
+        if (edge.op === '/') {
+          expect(isClassicFactor(edge.operand)).toBe(true)
+          expect(isClassicFactor(edge.result)).toBe(true)
+          expect(input).toBe(edge.operand * edge.result)
+        }
+      }
+    }
+  })
+
+  test('rejects out-of-table multiplication and division facts', () => {
+    const cfg = tableDrillConfig(70)
+
+    for (const seed of seeds(120)) {
+      const p = generatePuzzle(cfg, seed)
+
+      for (let i = 0; i < p.edges.length; i += 1) {
+        const edge = p.edges[i]
+        const input = p.pathValues[i]
+
+        expect(edge.op === 'x' && input === 12 && edge.operand === 4).toBe(false)
+        expect(edge.op === '/' && input === 64 && edge.operand === 4 && edge.result === 16).toBe(false)
+      }
+    }
+  })
+
+  test('table fact predicates reject two-digit sides and allow in-table square division', () => {
+    expect(isMultiplicationTableMultiplicationFact(12, 4)).toBe(false)
+    expect(isMultiplicationTableMultiplicationFact(8, 8)).toBe(true)
+    expect(isMultiplicationTableDivisionFact(64, 4)).toBe(false)
+    expect(isMultiplicationTableDivisionFact(64, 8)).toBe(true)
+  })
+
+  test('counts reversed multiplication facts as the same repetition bucket', () => {
+    const cfg = tableDrillConfig(40)
+
+    for (const seed of seeds(80)) {
+      const p = generatePuzzle(cfg, seed)
+      const factCounts = new Map<string, number>()
+      let mulDivCount = 0
+
+      for (let i = 0; i < p.edges.length; i += 1) {
+        const edge = p.edges[i]
+        if (edge.op === 'x') {
+          mulDivCount += 1
+          const key = classicFactKey(p.pathValues[i], edge.operand)
+          factCounts.set(key, (factCounts.get(key) ?? 0) + 1)
+        }
+        if (edge.op === '/') {
+          mulDivCount += 1
+          const key = classicFactKey(edge.operand, edge.result)
+          factCounts.set(key, (factCounts.get(key) ?? 0) + 1)
+        }
+      }
+
+      const uniqueFacts = factCounts.size
+      const mostUsedFact = Math.max(0, ...factCounts.values())
+      expect(mulDivCount).toBeGreaterThanOrEqual(24)
+      expect(uniqueFacts / Math.max(1, mulDivCount)).toBeGreaterThanOrEqual(0.55)
+      expect(mostUsedFact / Math.max(1, mulDivCount)).toBeLessThanOrEqual(0.18)
+    }
+  })
+
+  test('uses plus and minus only as escape hatches in table drill mode', () => {
+    const cfg = tableDrillConfig(50)
+    let escapeCount = 0
+    let mulDivCount = 0
+
+    for (const seed of seeds(80)) {
+      const p = generatePuzzle(cfg, seed)
+      const counts = opCounts(p.edges)
+      escapeCount += counts['+'] + counts['-']
+      mulDivCount += counts.x + counts['/']
+
+      for (const edge of p.edges) {
+        if (edge.op === '+' || edge.op === '-') {
+          expect(edge.result).toBeGreaterThan(0)
+          expect(edge.result).toBeLessThanOrEqual(81)
+        }
+      }
+    }
+
+    expect(mulDivCount).toBeGreaterThan(escapeCount)
+    expect(escapeCount / Math.max(1, mulDivCount + escapeCount)).toBeLessThanOrEqual(0.35)
   })
 })
