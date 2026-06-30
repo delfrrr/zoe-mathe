@@ -381,6 +381,60 @@ html, body {
 .svg-operand { font-family: 'Geist Mono', ui-monospace, monospace; font-size: 13px; font-weight: 600; fill: #1a1a1a; font-variant-numeric: tabular-nums; }
 .svg-value { font-family: 'Geist Mono', ui-monospace, monospace; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
+.area-sheet {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr;
+  align-content: center;
+  gap: 18px 22px;
+}
+
+.area-count-2,
+.area-count-4,
+.area-count-5,
+.area-count-6 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.area-task {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 0;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.area-puzzle-svg {
+  width: 100%;
+  max-width: 590px;
+  height: auto;
+  overflow: visible;
+}
+
+.area-box {
+  fill: transparent;
+  stroke: #1a1a1a;
+  stroke-width: 2.2;
+}
+
+.area-label,
+.area-side-label {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 15px;
+  font-weight: 700;
+  fill: #1a1a1a;
+  font-variant-numeric: tabular-nums;
+}
+
+.area-side-label { font-size: 14px; }
+
+.area-dimension line {
+  stroke: #1a1a1a;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
 .houses {
   margin-top: 26px;
   display: grid;
@@ -456,6 +510,13 @@ html, body {
   .house { min-height: 96px; padding-top: 4px; padding-bottom: 8px; }
   .parking-slot { width: 44px; height: 44px; }
   .puzzle-svg { max-height: 620px; }
+  .area-sheet { gap: 6px 14px; align-content: center; }
+  .area-puzzle-svg { max-height: 250px; }
+  .area-count-1 .area-puzzle-svg { max-height: 560px; }
+  .area-count-2 .area-puzzle-svg,
+  .area-count-3 .area-puzzle-svg { max-height: 320px; }
+  .area-label { font-size: 14px; }
+  .area-side-label { font-size: 13px; }
   .paper {
     box-shadow: none;
     border: none;

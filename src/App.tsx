@@ -7,7 +7,20 @@ import {
   type Puzzle,
   type TierKey,
 } from './lib/generator'
+import {
+  generateAreaWorksheet,
+  maxBoxesForPuzzlesPerPage,
+  maxPuzzlesForBoxesPerPuzzle,
+  normalizeAreaConfig,
+  type AreaDimensionLabel,
+  type AreaNumberSize,
+  type AreaPuzzle,
+  type AreaPuzzleConfig,
+  type AreaRect,
+} from './lib/areaGenerator'
 import './App.css'
+
+type PuzzleFamily = 'math-flow' | 'area'
 
 type UiConfig = Config & {
   stickerMode: boolean
@@ -54,6 +67,12 @@ const PRESETS: Preset[] = [
 
 const OP_LABEL: Record<Op, string> = { '+': '+', '-': '-', x: 'x', '/': '/' }
 const OP_RENDER: Record<Op, string> = { '+': '+', '-': '−', x: '×', '/': '÷' }
+const AREA_SIZE_LABEL: Record<AreaNumberSize, string> = {
+  1: 'Small',
+  2: 'Medium',
+  3: 'Large',
+  4: 'XL',
+}
 
 function randomSeedCode() {
   const n = Math.floor(Math.random() * 36 ** 6)
@@ -111,7 +130,8 @@ function HouseIcon({ kind, size = 44 }: { kind: 'ghost' | 'crown'; size?: number
   )
 }
 
-function HousesFooter() {
+function HousesFooter({ slotCount = 4 }: { slotCount?: number }) {
+  const slots = Math.max(1, Math.min(6, slotCount))
   return (
     <div className="houses">
       <div className="house house-left">
@@ -120,7 +140,7 @@ function HousesFooter() {
           <div className="house-title">Not Yet</div>
         </div>
         <div className="parking-grid">
-          {Array.from({ length: 4 }).map((_, idx) => (
+          {Array.from({ length: slots }).map((_, idx) => (
             <span key={`left-${idx}`} className="parking-slot" />
           ))}
         </div>
@@ -131,12 +151,121 @@ function HousesFooter() {
           <div className="house-title">You Got It</div>
         </div>
         <div className="parking-grid">
-          {Array.from({ length: 4 }).map((_, idx) => (
+          {Array.from({ length: slots }).map((_, idx) => (
             <span key={`right-${idx}`} className="parking-slot" />
           ))}
         </div>
       </div>
     </div>
+  )
+}
+
+function AreaSticker({
+  x,
+  y,
+  radius,
+  hidden,
+  showAnswers,
+}: {
+  x: number
+  y: number
+  radius: number
+  hidden: boolean
+  showAnswers: boolean
+}) {
+  if (!hidden || showAnswers) return null
+  return <circle className="sticker-disc" cx={x} cy={y} r={radius} fill="#f7b918" opacity="0.98" filter="url(#areaStickerShadow)" />
+}
+
+function rectSidePosition(rect: AreaRect, label: AreaDimensionLabel, scale: number, ox: number, oy: number) {
+  const x = ox + rect.x * scale
+  const y = oy + rect.y * scale
+  const w = rect.w * scale
+  const h = rect.h * scale
+  const gap = 18
+  const tick = 7
+  if (label.side === 'top') {
+    const ly = y - gap
+    return { x1: x, y1: ly, x2: x + w, y2: ly, tx: x + w / 2, ty: ly - 7, ticks: [[x, ly - tick, x, ly + tick], [x + w, ly - tick, x + w, ly + tick]] }
+  }
+  if (label.side === 'bottom') {
+    const ly = y + h + gap
+    return { x1: x, y1: ly, x2: x + w, y2: ly, tx: x + w / 2, ty: ly + 15, ticks: [[x, ly - tick, x, ly + tick], [x + w, ly - tick, x + w, ly + tick]] }
+  }
+  if (label.side === 'left') {
+    const lx = x - gap
+    return { x1: lx, y1: y, x2: lx, y2: y + h, tx: lx - 10, ty: y + h / 2 + 4, ticks: [[lx - tick, y, lx + tick, y], [lx - tick, y + h, lx + tick, y + h]] }
+  }
+  const lx = x + w + gap
+  return { x1: lx, y1: y, x2: lx, y2: y + h, tx: lx + 10, ty: y + h / 2 + 4, ticks: [[lx - tick, y, lx + tick, y], [lx - tick, y + h, lx + tick, y + h]] }
+}
+
+function AreaPuzzleSVG({ puzzle, showAnswers, compact = false }: { puzzle: AreaPuzzle; showAnswers: boolean; compact?: boolean }) {
+  const minX = Math.min(...puzzle.rects.map((rect) => rect.x))
+  const minY = Math.min(...puzzle.rects.map((rect) => rect.y))
+  const maxX = Math.max(...puzzle.rects.map((rect) => rect.x + rect.w))
+  const maxY = Math.max(...puzzle.rects.map((rect) => rect.y + rect.h))
+  const widthUnits = maxX - minX
+  const heightUnits = maxY - minY
+  const scale = Math.min(430 / Math.max(1, widthUnits), (compact ? 180 : 250) / Math.max(1, heightUnits), 24)
+  const drawingW = widthUnits * scale
+  const drawingH = heightUnits * scale
+  const ox = 80 - minX * scale + (430 - drawingW) / 2
+  const oy = 48 - minY * scale + ((compact ? 180 : 250) - drawingH) / 2
+  const viewH = compact ? 290 : 360
+
+  return (
+    <svg className="area-puzzle-svg" viewBox={`0 0 590 ${viewH}`} aria-label="Area puzzle">
+      <defs>
+        <filter id="areaStickerShadow" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="3.5" />
+          <feOffset dx="1" dy="4" result="offsetBlur" />
+          <feComponentTransfer>
+            <feFuncA type="linear" slope="0.55" />
+          </feComponentTransfer>
+          <feMerge>
+            <feMergeNode />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+
+      {puzzle.rects.map((rect) => {
+        const x = ox + rect.x * scale
+        const y = oy + rect.y * scale
+        const w = rect.w * scale
+        const h = rect.h * scale
+        const isUnknownArea = puzzle.unknown.kind === 'area' && puzzle.unknown.rectId === rect.id
+        return (
+          <g key={rect.id}>
+            <rect className="area-box" x={x} y={y} width={w} height={h} />
+            <text className="area-label" x={x + w / 2} y={y + h / 2 + 5} textAnchor="middle">
+              {showAnswers || !isUnknownArea ? rect.area : puzzle.answer}
+            </text>
+            <AreaSticker x={x + w / 2} y={y + h / 2} radius={Math.max(18, Math.min(w, h) * 0.33)} hidden={isUnknownArea} showAnswers={showAnswers} />
+          </g>
+        )
+      })}
+
+      {puzzle.labels.map((label) => {
+        const rect = puzzle.rects.find((candidate) => candidate.id === label.rectId)
+        if (!rect) return null
+        const pos = rectSidePosition(rect, label, scale, ox, oy)
+        const isVertical = label.side === 'left' || label.side === 'right'
+        return (
+          <g key={label.id} className="area-dimension">
+            <line x1={pos.x1} y1={pos.y1} x2={pos.x2} y2={pos.y2} />
+            {pos.ticks.map((tick, idx) => (
+              <line key={`${label.id}-tick-${idx}`} x1={tick[0]} y1={tick[1]} x2={tick[2]} y2={tick[3]} />
+            ))}
+            <text className="area-side-label" x={pos.tx} y={pos.ty} textAnchor={isVertical && label.side === 'left' ? 'end' : isVertical ? 'start' : 'middle'}>
+              {showAnswers || !label.hidden ? label.value : puzzle.answer}
+            </text>
+            <AreaSticker x={pos.tx} y={pos.ty - 4} radius={18} hidden={label.hidden} showAnswers={showAnswers} />
+          </g>
+        )
+      })}
+    </svg>
   )
 }
 
@@ -308,6 +437,7 @@ function PuzzleSVG({ puzzle, showAnswers, stickerMode }: { puzzle: Puzzle; showA
 }
 
 function App() {
+  const [puzzleFamily, setPuzzleFamily] = useState<PuzzleFamily>('math-flow')
   const [activePreset, setActivePreset] = useState<Preset['key']>('standard')
   const [config, setConfig] = useState<UiConfig>({
     operations: 40,
@@ -315,6 +445,11 @@ function App() {
     ops: ['+', '-'],
     stickerMode: true,
     showSolutions: false,
+  })
+  const [areaConfig, setAreaConfig] = useState<AreaPuzzleConfig>({
+    puzzlesPerPage: 2,
+    numberSize: 2,
+    boxesPerPuzzle: 3,
   })
   const [seed, setSeed] = useState(() => {
     const url = new URL(window.location.href)
@@ -336,6 +471,12 @@ function App() {
   const puzzle = useMemo(
     () => generatePuzzle(coreConfig, seed, config.stickerMode ? 4 : 0),
     [coreConfig, seed, config.stickerMode],
+  )
+
+  const normalizedAreaConfig = useMemo(() => normalizeAreaConfig(areaConfig), [areaConfig])
+  const areaWorksheet = useMemo(
+    () => generateAreaWorksheet(normalizedAreaConfig, seed),
+    [normalizedAreaConfig, seed],
   )
 
   const timeLabel = useMemo(
@@ -386,6 +527,17 @@ function App() {
     })
   }
 
+  const updateAreaConfig = (patch: Partial<AreaPuzzleConfig>) => {
+    setAreaConfig((prev) => {
+      const next = normalizeAreaConfig({ ...prev, ...patch })
+      if (patch.boxesPerPuzzle !== undefined) {
+        const maxPuzzles = maxPuzzlesForBoxesPerPuzzle(patch.boxesPerPuzzle)
+        return normalizeAreaConfig({ ...next, puzzlesPerPage: Math.min(next.puzzlesPerPage, maxPuzzles) })
+      }
+      return next
+    })
+  }
+
   return (
     <div className="app-root">
       <aside className="sidebar no-print">
@@ -398,6 +550,28 @@ function App() {
         </div>
 
         <div className="sidebar-scroll">
+          <section className="panel">
+            <h3>Puzzle type</h3>
+            <div className="segmented two-col">
+              <button
+                type="button"
+                className={puzzleFamily === 'math-flow' ? 'seg active' : 'seg'}
+                onClick={() => setPuzzleFamily('math-flow')}
+              >
+                Math-Flow
+              </button>
+              <button
+                type="button"
+                className={puzzleFamily === 'area' ? 'seg active' : 'seg'}
+                onClick={() => setPuzzleFamily('area')}
+              >
+                Area
+              </button>
+            </div>
+          </section>
+
+          {puzzleFamily === 'math-flow' && (
+            <>
           <section className="panel">
             <h3>Difficulty</h3>
             <div className="preset-grid">
@@ -514,24 +688,114 @@ function App() {
             </div>
             <small>At least one operation must stay enabled</small>
           </section>
+            </>
+          )}
+
+          {puzzleFamily === 'area' && (
+            <>
+              <section className="panel">
+                <div className="panel-head">
+                  <h3>Area setup</h3>
+                  <span className="badge">{areaWorksheet.puzzles.length} puzzles</span>
+                </div>
+                <label className="field">
+                  <div className="row between">
+                    <span>Puzzles per page</span>
+                    <span className="mono">{normalizedAreaConfig.puzzlesPerPage}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={maxPuzzlesForBoxesPerPuzzle(normalizedAreaConfig.boxesPerPuzzle)}
+                    value={normalizedAreaConfig.puzzlesPerPage}
+                    onChange={(e) => updateAreaConfig({ puzzlesPerPage: Number(e.target.value) })}
+                  />
+                  <small>Readable range changes with boxes per puzzle.</small>
+                </label>
+                <label className="field">
+                  <div className="row between">
+                    <span>Number size</span>
+                    <span className="mono">{AREA_SIZE_LABEL[normalizedAreaConfig.numberSize]}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={4}
+                    value={normalizedAreaConfig.numberSize}
+                    onChange={(e) => updateAreaConfig({ numberSize: Number(e.target.value) as AreaNumberSize })}
+                  />
+                  <small>Controls side lengths and derived areas.</small>
+                </label>
+                <label className="field">
+                  <div className="row between">
+                    <span>Boxes per puzzle</span>
+                    <span className="mono">{normalizedAreaConfig.boxesPerPuzzle}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={2}
+                    max={maxBoxesForPuzzlesPerPage(normalizedAreaConfig.puzzlesPerPage)}
+                    value={normalizedAreaConfig.boxesPerPuzzle}
+                    onChange={(e) => updateAreaConfig({ boxesPerPuzzle: Number(e.target.value) })}
+                  />
+                  <small>Control prevents combinations that would be too dense to read.</small>
+                </label>
+              </section>
+
+              <section className="panel">
+                <h3>Mode</h3>
+                <div className="solution-toggle">
+                  <div>
+                    <div className="toggle-label">Print answer key</div>
+                    <small>Adds solved puzzle pictures on a second page.</small>
+                  </div>
+                  <input
+                    type="checkbox"
+                    className="switch"
+                    checked={config.showSolutions}
+                    onChange={(e) => setConfig((p) => ({ ...p, showSolutions: e.target.checked }))}
+                  />
+                </div>
+              </section>
+            </>
+          )}
 
           <section className="panel stats">
             <div className="panel-head">
               <h3>Generated</h3>
               <span className="badge mono">#{seed.toLowerCase()}</span>
             </div>
-            <div className="stat-row">
-              <span>Steps</span>
-              <strong>{Math.max(0, puzzle.path.length - 1)}</strong>
-            </div>
-            <div className="stat-row">
-              <span>Time est.</span>
-              <strong>{timeLabel}</strong>
-            </div>
-            <div className="stat-row">
-              <span>Final value</span>
-              <strong>{puzzle.finalValue}</strong>
-            </div>
+            {puzzleFamily === 'math-flow' ? (
+              <>
+                <div className="stat-row">
+                  <span>Steps</span>
+                  <strong>{Math.max(0, puzzle.path.length - 1)}</strong>
+                </div>
+                <div className="stat-row">
+                  <span>Time est.</span>
+                  <strong>{timeLabel}</strong>
+                </div>
+                <div className="stat-row">
+                  <span>Final value</span>
+                  <strong>{puzzle.finalValue}</strong>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="stat-row">
+                  <span>Puzzles</span>
+                  <strong>{normalizedAreaConfig.puzzlesPerPage}</strong>
+                </div>
+                <div className="stat-row">
+                  <span>Boxes</span>
+                  <strong>{normalizedAreaConfig.boxesPerPuzzle}</strong>
+                </div>
+                <div className="stat-row">
+                  <span>Numbers</span>
+                  <strong>{AREA_SIZE_LABEL[normalizedAreaConfig.numberSize]}</strong>
+                </div>
+              </>
+            )}
           </section>
         </div>
 
@@ -550,11 +814,13 @@ function App() {
           <div className="paper">
             <header className="paper-header">
               <div>
-                <h1>Math-Flow Quest</h1>
+                <h1>{puzzleFamily === 'math-flow' ? 'Math-Flow Quest' : 'Area Puzzles'}</h1>
                 <p>
-                  {config.stickerMode
-                    ? 'Solve each circle. Peek under the sticker to check. Park it on the right if you got it — on the left if not.'
-                    : 'Start at the filled circle. Follow each arrow and apply its operation to the previous answer.'}
+                  {puzzleFamily === 'area'
+                    ? 'Use area facts and shared rectangle sides to find the hidden number. Peel the sticker to check.'
+                    : config.stickerMode
+                      ? 'Solve each circle. Peek under the sticker to check. Park it on the right if you got it — on the left if not.'
+                      : 'Start at the filled circle. Follow each arrow and apply its operation to the previous answer.'}
                 </p>
               </div>
               <div className="meta mono">
@@ -571,31 +837,59 @@ function App() {
 
             <div className="paper-body">
               <div className="legend mono">
-                <span>
-                  Steps <b>{Math.max(0, puzzle.path.length - 1)}</b>
-                </span>
-                <span>
-                  Range <b>{config.tier}</b>
-                </span>
-                <span>
-                  Ops <b>{config.ops.map((o) => OP_LABEL[o]).join(' ')}</b>
-                </span>
-                <span>
-                  Time <b>{timeLabel.replace('≈ ', '≈ ')}</b>
-                </span>
-                {config.stickerMode && (
+                {puzzleFamily === 'math-flow' ? (
+                  <>
+                    <span>
+                      Steps <b>{Math.max(0, puzzle.path.length - 1)}</b>
+                    </span>
+                    <span>
+                      Range <b>{config.tier}</b>
+                    </span>
+                    <span>
+                      Ops <b>{config.ops.map((o) => OP_LABEL[o]).join(' ')}</b>
+                    </span>
+                    <span>
+                      Time <b>{timeLabel.replace('≈ ', '≈ ')}</b>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span>
+                      Puzzles <b>{normalizedAreaConfig.puzzlesPerPage}</b>
+                    </span>
+                    <span>
+                      Boxes <b>{normalizedAreaConfig.boxesPerPuzzle}</b>
+                    </span>
+                    <span>
+                      Numbers <b>{AREA_SIZE_LABEL[normalizedAreaConfig.numberSize]}</b>
+                    </span>
+                  </>
+                )}
+                {(config.stickerMode || puzzleFamily === 'area') && (
                   <span className="legend-hint">
                     <span className="legend-hint-dot" />
-                    Cover the grey circles with stickers
+                    Cover the hidden answers with stickers
                   </span>
                 )}
               </div>
 
-              <div className="puzzle-wrap">
-                <PuzzleSVG puzzle={puzzle} showAnswers={false} stickerMode={config.stickerMode} />
-              </div>
+              {puzzleFamily === 'math-flow' ? (
+                <div className="puzzle-wrap">
+                  <PuzzleSVG puzzle={puzzle} showAnswers={false} stickerMode={config.stickerMode} />
+                </div>
+              ) : (
+                <div className={`area-sheet area-count-${normalizedAreaConfig.puzzlesPerPage}`}>
+                  {areaWorksheet.puzzles.map((areaPuzzle) => (
+                    <div className="area-task" key={areaPuzzle.id}>
+                      <AreaPuzzleSVG puzzle={areaPuzzle} showAnswers={false} compact={normalizedAreaConfig.puzzlesPerPage >= 4} />
+                    </div>
+                  ))}
+                </div>
+              )}
 
-              {config.stickerMode && <HousesFooter />}
+              {(config.stickerMode || puzzleFamily === 'area') && (
+                <HousesFooter slotCount={puzzleFamily === 'area' ? normalizedAreaConfig.puzzlesPerPage : 4} />
+              )}
             </div>
 
           </div>
@@ -615,9 +909,19 @@ function App() {
                 </div>
               </header>
               <div className="paper-body">
-                <div className="puzzle-wrap">
-                  <PuzzleSVG puzzle={puzzle} showAnswers={true} stickerMode={false} />
-                </div>
+                {puzzleFamily === 'math-flow' ? (
+                  <div className="puzzle-wrap">
+                    <PuzzleSVG puzzle={puzzle} showAnswers={true} stickerMode={false} />
+                  </div>
+                ) : (
+                  <div className={`area-sheet area-count-${normalizedAreaConfig.puzzlesPerPage}`}>
+                    {areaWorksheet.puzzles.map((areaPuzzle) => (
+                      <div className="area-task" key={`solution-${areaPuzzle.id}`}>
+                        <AreaPuzzleSVG puzzle={areaPuzzle} showAnswers={true} compact={normalizedAreaConfig.puzzlesPerPage >= 4} />
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
