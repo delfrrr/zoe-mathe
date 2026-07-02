@@ -34,6 +34,10 @@ export type AreaPuzzle = {
   dependencyOrder: string[]
 }
 
+export type AreaPuzzleClue =
+  | { id: string; kind: 'area'; rectId: string; value: number }
+  | { id: string; kind: 'side'; rectId: string; labelId: string; value: number }
+
 export type AreaWorksheet = {
   config: AreaPuzzleConfig
   puzzles: AreaPuzzle[]
@@ -194,9 +198,31 @@ function sharedDimension(prev: AreaRect, next: AreaRect): 'w' | 'h' | undefined 
   return undefined
 }
 
+export function getVisibleAreaPuzzleClues(puzzle: AreaPuzzle): AreaPuzzleClue[] {
+  const sideClues: AreaPuzzleClue[] = puzzle.labels
+    .filter((label) => !label.hidden)
+    .map((label) => ({ id: `side:${label.id}`, kind: 'side', rectId: label.rectId, labelId: label.id, value: label.value }))
+
+  const areaClues: AreaPuzzleClue[] = puzzle.rects
+    .filter((rect) => !(puzzle.unknown.kind === 'area' && puzzle.unknown.rectId === rect.id))
+    .map((rect) => ({ id: `area:${rect.id}`, kind: 'area', rectId: rect.id, value: rect.area }))
+
+  return [...sideClues, ...areaClues]
+}
+
+export function hasLimitedRepeatedDimensions(puzzle: Pick<AreaPuzzle, 'rects'>) {
+  if (puzzle.rects.length <= 2) return true
+  const counts = new Map<number, number>()
+  for (const rect of puzzle.rects) {
+    counts.set(rect.w, (counts.get(rect.w) ?? 0) + 1)
+    counts.set(rect.h, (counts.get(rect.h) ?? 0) + 1)
+  }
+  return [...counts.values()].every((count) => count <= 2)
+}
+
 function buildRectChain(boxCount: number, size: AreaNumberSize, rng: () => number) {
   const range = SIZE_RANGES[size]
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
     const rects: AreaRect[] = []
     const first: AreaRect = {
       id: 'r0',
@@ -227,51 +253,112 @@ function buildRectChain(boxCount: number, size: AreaNumberSize, rng: () => numbe
       }
       rects.push(placed)
     }
-    if (ok) return recenter(rects)
+    const centered = ok ? recenter(rects) : []
+    if (ok && hasLimitedRepeatedDimensions({ rects: centered })) return centered
   }
-  throw new Error(`Unable to build area puzzle with ${boxCount} boxes`)
+
+  return buildFallbackRectChain(boxCount, size)
 }
 
-function buildPuzzle(seedCode: string, config: AreaPuzzleConfig, index: number): AreaPuzzle {
-  const rng = mulberry32((parseInt(seedCode, 36) >>> 0) ^ hashString(JSON.stringify(config)) ^ Math.imul(index + 1, 2654435761))
-  const rects = buildRectChain(config.boxesPerPuzzle, config.numberSize, rng)
-  const last = rects[rects.length - 1]
-  const previous = rects[rects.length - 2]
-  const unknownKind = (index + Math.floor(rng() * 7)) % 2 === 0 ? 'side' : 'area'
-  const dependencyOrder = rects.map((rect) => rect.id)
-  const labels: AreaDimensionLabel[] = []
+function buildFallbackRectChain(boxCount: number, size: AreaNumberSize) {
+  const range = SIZE_RANGES[size]
+  const valueAt = (index: number) => range.min + 1 + (index % Math.max(1, range.max - range.min))
+  const firstW = valueAt(0)
+  const firstH = valueAt(1)
+  const rects: AreaRect[] = [{ id: 'r0', x: 0, y: 0, w: firstW, h: firstH, area: firstW * firstH }]
 
-  const firstSide = exposedSideFor(rects, rects[0], rng() < 0.5 ? 'top' : 'left')
-  labels.push(makeLabel(rects[0], firstSide, sideValue(rects[0], firstSide)))
-
-  if (unknownKind === 'side') {
-    const side = finalWorkSideFor(rects, last, previous)
-    const value = sideValue(last, side)
-    const hiddenLabel = makeLabel(last, side, value, true)
-    labels.push(hiddenLabel)
-    return {
-      id: `area-${index + 1}`,
-      rects,
-      labels,
-      unknown: { kind: 'side', rectId: last.id, labelId: hiddenLabel.id, value, dependsOn: dependencyOrder },
-      answer: value,
-      dependencyOrder,
+  for (let i = 1; i < boxCount; i += 1) {
+    const prev = rects[i - 1]
+    const joinsSideways = i % 2 === 1
+    if (joinsSideways) {
+      const w = valueAt(i + 1)
+      rects.push({ id: `r${i}`, x: prev.x + prev.w, y: prev.y, w, h: prev.h, area: w * prev.h })
+    } else {
+      const h = valueAt(i + 1)
+      rects.push({ id: `r${i}`, x: prev.x, y: prev.y + prev.h, w: prev.w, h, area: prev.w * h })
     }
   }
 
-  const knownSide = finalWorkSideFor(rects, last, previous)
-  labels.push(makeLabel(last, knownSide, sideValue(last, knownSide)))
-  return {
+  return recenter(rects)
+}
+
+function buildPuzzle(seedCode: string, config: AreaPuzzleConfig, index: number): AreaPuzzle {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const rng = mulberry32(
+      (parseInt(seedCode, 36) >>> 0) ^
+        hashString(JSON.stringify(config)) ^
+        Math.imul(index + 1, 2654435761) ^
+        Math.imul(attempt + 1, 1597334677),
+    )
+    const rects = buildRectChain(config.boxesPerPuzzle, config.numberSize, rng)
+    const last = rects[rects.length - 1]
+    const previous = rects[rects.length - 2]
+    const unknownKind = (index + attempt + Math.floor(rng() * 7)) % 2 === 0 ? 'side' : 'area'
+    const dependencyOrder = rects.map((rect) => rect.id)
+    const labels: AreaDimensionLabel[] = []
+
+    const firstSide = exposedSideFor(rects, rects[0], rng() < 0.5 ? 'top' : 'left')
+    labels.push(makeLabel(rects[0], firstSide, sideValue(rects[0], firstSide)))
+
+    let puzzle: AreaPuzzle
+    if (unknownKind === 'side') {
+      const side = finalWorkSideFor(rects, last, previous)
+      const value = sideValue(last, side)
+      const hiddenLabel = makeLabel(last, side, value, true)
+      labels.push(hiddenLabel)
+      puzzle = {
+        id: `area-${index + 1}`,
+        rects,
+        labels,
+        unknown: { kind: 'side', rectId: last.id, labelId: hiddenLabel.id, value, dependsOn: dependencyOrder },
+        answer: value,
+        dependencyOrder,
+      }
+    } else {
+      const knownSide = finalWorkSideFor(rects, last, previous)
+      labels.push(makeLabel(last, knownSide, sideValue(last, knownSide)))
+      puzzle = {
+        id: `area-${index + 1}`,
+        rects,
+        labels,
+        unknown: { kind: 'area', rectId: last.id, value: last.area, dependsOn: dependencyOrder },
+        answer: last.area,
+        dependencyOrder,
+      }
+    }
+
+    if (validateAreaPuzzle(puzzle)) return puzzle
+  }
+
+  return buildValidatedFallbackPuzzle(config, index)
+}
+
+function buildValidatedFallbackPuzzle(config: AreaPuzzleConfig, index: number): AreaPuzzle {
+  const rects = buildFallbackRectChain(config.boxesPerPuzzle, config.numberSize)
+  const last = rects[rects.length - 1]
+  const previous = rects[rects.length - 2]
+  const dependencyOrder = rects.map((rect) => rect.id)
+  const labels: AreaDimensionLabel[] = [makeLabel(rects[0], 'left', rects[0].h)]
+  const side = finalWorkSideFor(rects, last, previous)
+  const value = sideValue(last, side)
+  const hiddenLabel = makeLabel(last, side, value, true)
+  labels.push(hiddenLabel)
+
+  const puzzle: AreaPuzzle = {
     id: `area-${index + 1}`,
     rects,
     labels,
-    unknown: { kind: 'area', rectId: last.id, value: last.area, dependsOn: dependencyOrder },
-    answer: last.area,
+    unknown: { kind: 'side', rectId: last.id, labelId: hiddenLabel.id, value, dependsOn: dependencyOrder },
+    answer: value,
     dependencyOrder,
   }
+
+  return puzzle
 }
 
-export function solveAreaPuzzle(puzzle: AreaPuzzle, removedRectId?: string) {
+export function solveAreaPuzzle(puzzle: AreaPuzzle, removedRectIdOrOptions?: string | { removedRectId?: string; removedClueId?: string }) {
+  const removedRectId = typeof removedRectIdOrOptions === 'string' ? removedRectIdOrOptions : removedRectIdOrOptions?.removedRectId
+  const removedClueId = typeof removedRectIdOrOptions === 'string' ? undefined : removedRectIdOrOptions?.removedClueId
   const available = new Set(puzzle.rects.map((rect) => rect.id))
   if (removedRectId) available.delete(removedRectId)
 
@@ -281,7 +368,7 @@ export function solveAreaPuzzle(puzzle: AreaPuzzle, removedRectId?: string) {
   }
 
   for (const label of puzzle.labels) {
-    if (label.hidden || !available.has(label.rectId)) continue
+    if (label.hidden || !available.has(label.rectId) || removedClueId === `side:${label.id}`) continue
     const dims = known.get(label.rectId)
     if (dims) dims[sideDimension(label.side)] = label.value
   }
@@ -292,7 +379,7 @@ export function solveAreaPuzzle(puzzle: AreaPuzzle, removedRectId?: string) {
     for (const rect of puzzle.rects) {
       if (!available.has(rect.id)) continue
       const dims = known.get(rect.id)
-      const areaKnown = !(puzzle.unknown.kind === 'area' && puzzle.unknown.rectId === rect.id)
+      const areaKnown = !(puzzle.unknown.kind === 'area' && puzzle.unknown.rectId === rect.id) && removedClueId !== `area:${rect.id}`
       if (!dims || !areaKnown) continue
       if (dims.w !== undefined && dims.h === undefined && rect.area % dims.w === 0) {
         dims.h = rect.area / dims.w
@@ -335,7 +422,7 @@ export function solveAreaPuzzle(puzzle: AreaPuzzle, removedRectId?: string) {
     const labelId = puzzle.unknown.labelId
     const label = puzzle.labels.find((candidate) => candidate.id === labelId)
     const dims = known.get(puzzle.unknown.rectId)
-    if (rect && label && available.has(rect.id) && dims) {
+    if (rect && label && available.has(rect.id) && dims && removedClueId !== `area:${rect.id}`) {
       const targetDim = sideDimension(label.side)
       const knownDim = targetDim === 'w' ? dims.h : dims.w
       if (knownDim !== undefined && rect.area % knownDim === 0) {
@@ -369,7 +456,8 @@ export function validateAreaPuzzle(puzzle: AreaPuzzle) {
   const singleUnknown = puzzle.unknown.value === puzzle.answer
   const solved = solveAreaPuzzle(puzzle)
   const allRectsUsed = puzzle.rects.every((rect) => solved.usedRectIds.includes(rect.id))
-  return allRectsIncluded && hasOnlyKnownRects && noOnes && connected && singleUnknown && solved.solved && allRectsUsed
+  const everyClueRequired = getVisibleAreaPuzzleClues(puzzle).every((clue) => !solveAreaPuzzle(puzzle, { removedClueId: clue.id }).solved)
+  return allRectsIncluded && hasOnlyKnownRects && noOnes && connected && singleUnknown && solved.solved && allRectsUsed && hasLimitedRepeatedDimensions(puzzle) && everyClueRequired
 }
 
 export function validateAreaPuzzleAfterRemovingRect(puzzle: AreaPuzzle, rectId: string) {

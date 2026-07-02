@@ -496,7 +496,7 @@ html, body {
 .solutions-page { break-before: page; page-break-before: always; }
 
 @media print {
-  @page { margin: 0; }
+  @page { size: Letter; margin: 0; }
   .app-root { display: block; height: auto; }
   .no-print, .sidebar { display: none !important; }
   .sticker-disc { display: none; }
@@ -504,27 +504,32 @@ html, body {
   .preview { padding: 0; overflow: visible; background: white; }
   .preview-stage { display: block; gap: 0; }
   .paper-header { padding: 28px 40px 12px; }
-  .paper-body { padding: 16px 40px 8px; }
+  .paper-body { padding: 16px 40px 28px; min-height: 0; }
   .legend { margin-bottom: 8px; }
-  .houses { margin-top: 14px; }
+  .houses { margin-top: 18px; }
   .house { min-height: 96px; padding-top: 4px; padding-bottom: 8px; }
   .parking-slot { width: 44px; height: 44px; }
   .puzzle-svg { max-height: 620px; }
-  .area-sheet { gap: 6px 14px; align-content: center; }
-  .area-puzzle-svg { max-height: 250px; }
-  .area-count-1 .area-puzzle-svg { max-height: 560px; }
+  .area-sheet { gap: 10px 18px; align-content: center; }
+  .area-count-2 { grid-template-columns: 1fr; }
+  .area-puzzle-svg { max-height: 280px; }
+  .area-count-1 .area-puzzle-svg { max-height: 640px; }
   .area-count-2 .area-puzzle-svg,
-  .area-count-3 .area-puzzle-svg { max-height: 320px; }
+  .area-count-3 .area-puzzle-svg { max-height: 390px; }
+  .solutions-page .area-count-1 .area-puzzle-svg { max-height: 700px; }
+  .solutions-page .area-count-2 .area-puzzle-svg,
+  .solutions-page .area-count-3 .area-puzzle-svg { max-height: 460px; }
   .area-label { font-size: 14px; }
   .area-side-label { font-size: 13px; }
   .paper {
     box-shadow: none;
     border: none;
-    width: 100%;
-    min-height: auto;
-    height: auto;
+    width: 8.5in;
+    min-height: 11in;
+    height: 11in;
     border-radius: 0;
     margin: 0;
+    overflow: hidden;
     break-inside: avoid;
     page-break-inside: avoid;
   }

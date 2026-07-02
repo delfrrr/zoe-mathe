@@ -42,6 +42,21 @@ The first implementation exposed several design and puzzle-quality gaps that thi
 
 The correction pass must address these gaps without changing the existing Math-Flow drawing geometry or its release-critical layout snapshot.
 
+### Dependency and Dimension-Repetition Corrections
+
+Verified on June 30, 2026, after reviewing generated Area Sticker Puzzles from the MVP pass.
+
+The MVP remains blocked until generated puzzles prove that every provided number in the puzzle picture is needed to solve the sticker-covered answer. It is not enough for every rectangle to be present in the dependency chain; every visible area number and every visible side-length number must participate in the final solve.
+
+The generator must also avoid repetitive geometry where more than two boxes share the same numeric dimension. For puzzles with more than 2 boxes, no width or height value may appear on more than 2 boxes total.
+
+| Current gap | Required behavior |
+|-------------|-------------------|
+| A rectangle can be present but one of its printed numbers can be unused. | Removing any single visible clue number makes the hidden answer unsolved or ambiguous. |
+| Validation checks rectangle necessity, not individual clue necessity. | Validation checks visible printed area labels and visible printed side-length labels one by one. |
+| Connected chains can produce 3 boxes with the same height or width. | For puzzles with more than 2 boxes, no dimension value appears more than twice across all rectangle widths and heights. |
+| Stricter generation can make some candidates invalid. | Invalid candidates are discarded and retried; normal app generation must never throw. |
+
 ## Proposed Change
 
 Add a second puzzle type: Area Sticker Puzzles.
@@ -75,7 +90,9 @@ The app must preserve the current Regenerate, Print, Seed, and optional Answer K
 
 The UI must prevent impossible or unreadable combinations at the control level.
 
-There is no silent fallback. The visible slider values are the generated values.
+The UI should exclude known impossible combinations. The visible slider values should remain the generated values for all allowed settings.
+
+The generator still needs a safe fallback for normal app usage. If a candidate puzzle violates geometry, clue necessity, or dimension-repetition rules, discard it and retry within bounded limits. If the first candidate set fails, generate another valid candidate rather than throwing into the UI.
 
 Rules:
 
@@ -113,6 +130,12 @@ MVP constraints:
 - Every rectangle in a puzzle must be mathematically necessary to solve the hidden answer.
 - A puzzle is invalid if the hidden answer can be solved after removing any printed rectangle and its labels.
 - The solver dependency chain must include every rectangle id in the puzzle.
+- Every visible printed number in a puzzle must be mathematically necessary to solve the hidden answer.
+- Visible clue numbers include printed rectangle area labels and printed side-length labels.
+- The hidden sticker-covered answer is the target, not a clue; it is excluded from visible-clue necessity checks.
+- A puzzle is invalid if the hidden answer can be solved after removing any single visible clue number.
+- For puzzles with more than 2 boxes, no numeric dimension value may appear more than 2 times across all rectangle widths and heights.
+- Dimension repetition is counted on actual generated geometry, not only on visible labels.
 - Every puzzle has exactly one unknown.
 - Every puzzle has exactly one final answer.
 - The unknown can be side length or area.
@@ -136,6 +159,8 @@ Rules:
 - Do not generate immediate cancellation chains equivalent to `1 * 2 / 2 * 1`.
 - Prefer varied factors, areas, rectangle sizes, unknown positions, and layout shapes across puzzles on the same page.
 - Repeated facts on one worksheet should be minimized unless the selected number range makes alternatives impossible.
+- For puzzles with more than 2 boxes, reject candidates where the same side-length value appears on 3 or more rectangle sides when counting each rectangle's width and height once.
+- Reject candidates where any visible clue number can be removed without making the hidden answer unsolved or ambiguous.
 
 ## Sticker Behavior
 
@@ -185,16 +210,21 @@ The feature should fit natively in the existing app:
 13. Every generated puzzle is mathematically solvable from the printed known values.
 14. Every generated puzzle requires every printed rectangle to solve the hidden answer.
 15. Removing any rectangle from an area puzzle makes that puzzle fail solver validation.
-16. Area stickers visually match the current Math-Flow sticker discs.
-17. Area mode renders the exact current Math-Flow bottom parking layout and labels: `Not Yet` on the left and `You Got It` on the right.
-18. Area answer key mode shows the full solved puzzle picture, not a compact answer list.
-19. Area answer key mode contains no worked explanations.
-20. Area dimension guide lines have no arrowheads.
-21. Area dimension guide lines and side-length labels do not appear inside boxes or overlap unrelated geometry.
-22. Area puzzles are separated without extra task frames/cards around individual puzzles.
-23. Existing Math-Flow output remains deterministic for existing seeds/configs.
-24. `src/lib/__tests__/layout.test.ts` remains green without snapshot changes unless the user explicitly approves a current Math-Flow geometry change.
-25. Browser verification is completed before implementation handoff: exact URL/seed, screenshot of worksheet preview, answer-key screenshot, and print-media/PDF check.
+16. Every generated puzzle requires every visible printed clue number to solve the hidden answer.
+17. Removing any single visible printed clue number from an area puzzle makes that puzzle fail solver validation.
+18. The hidden sticker-covered answer is not counted as a clue for clue-removal validation.
+19. For puzzles with more than 2 boxes, no dimension value appears more than 2 times across all rectangle widths and heights.
+20. The generator does not throw during normal worksheet generation for allowed UI settings.
+21. Area stickers visually match the current Math-Flow sticker discs.
+22. Area mode renders the exact current Math-Flow bottom parking layout and labels: `Not Yet` on the left and `You Got It` on the right.
+23. Area answer key mode shows the full solved puzzle picture, not a compact answer list.
+24. Area answer key mode contains no worked explanations.
+25. Area dimension guide lines have no arrowheads.
+26. Area dimension guide lines and side-length labels do not appear inside boxes or overlap unrelated geometry.
+27. Area puzzles are separated without extra task frames/cards around individual puzzles.
+28. Existing Math-Flow output remains deterministic for existing seeds/configs.
+29. `src/lib/__tests__/layout.test.ts` remains green without snapshot changes unless the user explicitly approves a current Math-Flow geometry change.
+30. Browser verification is completed before implementation handoff: exact URL/seed, screenshot of worksheet preview, answer-key screenshot, and print-media/PDF check.
 
 ## Testing Plan
 
@@ -209,6 +239,10 @@ The feature should fit natively in the existing app:
 | Unit | Worksheet-level variation across layouts, values, and unknown types | +3 |
 | Unit | Solver dependency validation proves every rectangle is required | +6 |
 | Unit | Removing any rectangle from generated puzzles makes the solution invalid or underdetermined | +6 |
+| Unit | Removing any visible printed clue number makes the solution invalid or underdetermined | +6 |
+| Unit | Hidden sticker-covered answers are excluded from clue-removal validation | +2 |
+| Unit | Dimension repetition rejects 3+ matching width/height values for puzzles with more than 2 boxes | +4 |
+| Unit | Generator returns valid puzzles across representative seeds/configs without throwing | +4 |
 | Regression | Existing Math-Flow generator and layout tests remain unchanged | existing tests |
 | Browser | Area mode renders selected controls and puzzle preview | +1 scripted check |
 | Browser | Area stickers match Math-Flow sticker visual style | +1 scripted visual/style check |

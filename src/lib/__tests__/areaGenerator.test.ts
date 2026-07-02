@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'vitest'
 import {
   generateAreaWorksheet,
+  getVisibleAreaPuzzleClues,
+  hasLimitedRepeatedDimensions,
   maxBoxesForPuzzlesPerPage,
   maxPuzzlesForBoxesPerPuzzle,
   normalizeAreaConfig,
+  solveAreaPuzzle,
   validateAreaPuzzle,
   validateAreaPuzzleAfterRemovingRect,
   type AreaPuzzleConfig,
@@ -108,6 +111,63 @@ describe('area puzzle generation', () => {
         expect(new Set(puzzle.dependencyOrder)).toEqual(new Set(puzzle.rects.map((rect) => rect.id)))
         for (const rect of puzzle.rects) {
           expect(validateAreaPuzzleAfterRemovingRect(puzzle, rect.id)).toBe(false)
+        }
+      }
+    }
+  })
+
+  test('validates that every visible clue number is required', () => {
+    for (const seed of seeds(24)) {
+      const worksheet = generateAreaWorksheet(config, seed)
+      for (const puzzle of worksheet.puzzles) {
+        const clues = getVisibleAreaPuzzleClues(puzzle)
+        expect(clues.length).toBeGreaterThanOrEqual(puzzle.rects.length)
+        expect(clues.some((clue) => clue.kind === 'area' && puzzle.unknown.kind === 'area' && clue.rectId === puzzle.unknown.rectId)).toBe(false)
+        for (const clue of clues) {
+          expect(solveAreaPuzzle(puzzle, { removedClueId: clue.id }).solved).toBe(false)
+        }
+      }
+    }
+  })
+
+  test('limits repeated dimensions when a puzzle has more than two boxes', () => {
+    const configs: AreaPuzzleConfig[] = [
+      { puzzlesPerPage: 1, numberSize: 1, boxesPerPuzzle: 6 },
+      { puzzlesPerPage: 2, numberSize: 2, boxesPerPuzzle: 5 },
+      { puzzlesPerPage: 3, numberSize: 3, boxesPerPuzzle: 4 },
+      { puzzlesPerPage: 6, numberSize: 4, boxesPerPuzzle: 3 },
+    ]
+
+    for (const testedConfig of configs) {
+      for (const seed of seeds(18)) {
+        const worksheet = generateAreaWorksheet(testedConfig, seed)
+        for (const puzzle of worksheet.puzzles) {
+          expect(hasLimitedRepeatedDimensions(puzzle)).toBe(true)
+          const dimensionCounts = new Map<number, number>()
+          for (const rect of puzzle.rects) {
+            dimensionCounts.set(rect.w, (dimensionCounts.get(rect.w) ?? 0) + 1)
+            dimensionCounts.set(rect.h, (dimensionCounts.get(rect.h) ?? 0) + 1)
+          }
+          expect([...dimensionCounts.values()].every((count) => count <= 2)).toBe(true)
+        }
+      }
+    }
+  })
+
+  test('does not throw while generating representative allowed configurations', () => {
+    const configs: AreaPuzzleConfig[] = [
+      { puzzlesPerPage: 1, numberSize: 1, boxesPerPuzzle: 6 },
+      { puzzlesPerPage: 2, numberSize: 2, boxesPerPuzzle: 5 },
+      { puzzlesPerPage: 3, numberSize: 3, boxesPerPuzzle: 4 },
+      { puzzlesPerPage: 4, numberSize: 4, boxesPerPuzzle: 3 },
+      { puzzlesPerPage: 6, numberSize: 1, boxesPerPuzzle: 3 },
+    ]
+
+    for (const testedConfig of configs) {
+      for (const seed of seeds(30)) {
+        expect(() => generateAreaWorksheet(testedConfig, seed)).not.toThrow()
+        for (const puzzle of generateAreaWorksheet(testedConfig, seed).puzzles) {
+          expect(validateAreaPuzzle(puzzle)).toBe(true)
         }
       }
     }
