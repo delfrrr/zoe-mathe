@@ -18,6 +18,7 @@ import {
   type AreaPuzzleConfig,
   type AreaRect,
 } from './lib/areaGenerator'
+import { areaClueDisplayValue, areaStickerAnswerValue } from './lib/areaPresentation'
 import './App.css'
 
 type PuzzleFamily = 'math-flow' | 'area'
@@ -160,21 +161,15 @@ function HousesFooter({ slotCount = 4 }: { slotCount?: number }) {
   )
 }
 
-function AreaSticker({
-  x,
-  y,
-  radius,
-  hidden,
-  showAnswers,
-}: {
-  x: number
-  y: number
-  radius: number
-  hidden: boolean
-  showAnswers: boolean
-}) {
-  if (!hidden || showAnswers) return null
-  return <circle className="sticker-disc" cx={x} cy={y} r={radius} fill="#f7b918" opacity="0.98" filter="url(#areaStickerShadow)" />
+function AreaAnswerTarget({ puzzle }: { puzzle: AreaPuzzle }) {
+  return (
+    <div className="area-answer-target" data-area-answer-target={puzzle.id} aria-label={`Answer sticker target for ${puzzle.id}`}>
+      <span className="area-answer-value">{areaStickerAnswerValue(puzzle.answer)}</span>
+      <svg className="area-answer-sticker" viewBox="0 0 64 64" aria-hidden="true">
+        <circle className="sticker-disc" cx="32" cy="32" r="29" fill="#f7b918" />
+      </svg>
+    </div>
+  )
 }
 
 function rectSidePosition(rect: AreaRect, label: AreaDimensionLabel, scale: number, ox: number, oy: number) {
@@ -216,20 +211,6 @@ function AreaPuzzleSVG({ puzzle, showAnswers, compact = false }: { puzzle: AreaP
 
   return (
     <svg className="area-puzzle-svg" viewBox={`0 0 590 ${viewH}`} aria-label="Area puzzle">
-      <defs>
-        <filter id="areaStickerShadow" x="-80%" y="-80%" width="260%" height="260%">
-          <feGaussianBlur in="SourceAlpha" stdDeviation="3.5" />
-          <feOffset dx="1" dy="4" result="offsetBlur" />
-          <feComponentTransfer>
-            <feFuncA type="linear" slope="0.55" />
-          </feComponentTransfer>
-          <feMerge>
-            <feMergeNode />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-
       {puzzle.rects.map((rect) => {
         const x = ox + rect.x * scale
         const y = oy + rect.y * scale
@@ -240,9 +221,8 @@ function AreaPuzzleSVG({ puzzle, showAnswers, compact = false }: { puzzle: AreaP
           <g key={rect.id}>
             <rect className="area-box" x={x} y={y} width={w} height={h} />
             <text className="area-label" x={x + w / 2} y={y + h / 2 + 5} textAnchor="middle">
-              {showAnswers || !isUnknownArea ? rect.area : puzzle.answer}
+              {areaClueDisplayValue(rect.area, isUnknownArea, showAnswers)}
             </text>
-            <AreaSticker x={x + w / 2} y={y + h / 2} radius={Math.max(18, Math.min(w, h) * 0.33)} hidden={isUnknownArea} showAnswers={showAnswers} />
           </g>
         )
       })}
@@ -259,9 +239,8 @@ function AreaPuzzleSVG({ puzzle, showAnswers, compact = false }: { puzzle: AreaP
               <line key={`${label.id}-tick-${idx}`} x1={tick[0]} y1={tick[1]} x2={tick[2]} y2={tick[3]} />
             ))}
             <text className="area-side-label" x={pos.tx} y={pos.ty} textAnchor={isVertical && label.side === 'left' ? 'end' : isVertical ? 'start' : 'middle'}>
-              {showAnswers || !label.hidden ? label.value : puzzle.answer}
+              {areaClueDisplayValue(label.value, label.hidden, showAnswers)}
             </text>
-            <AreaSticker x={pos.tx} y={pos.ty - 4} radius={18} hidden={label.hidden} showAnswers={showAnswers} />
           </g>
         )
       })}
@@ -742,21 +721,6 @@ function App() {
                 </label>
               </section>
 
-              <section className="panel">
-                <h3>Mode</h3>
-                <div className="solution-toggle">
-                  <div>
-                    <div className="toggle-label">Print answer key</div>
-                    <small>Adds solved puzzle pictures on a second page.</small>
-                  </div>
-                  <input
-                    type="checkbox"
-                    className="switch"
-                    checked={config.showSolutions}
-                    onChange={(e) => setConfig((p) => ({ ...p, showSolutions: e.target.checked }))}
-                  />
-                </div>
-              </section>
             </>
           )}
 
@@ -882,6 +846,7 @@ function App() {
                   {areaWorksheet.puzzles.map((areaPuzzle) => (
                     <div className="area-task" key={areaPuzzle.id}>
                       <AreaPuzzleSVG puzzle={areaPuzzle} showAnswers={false} compact={normalizedAreaConfig.puzzlesPerPage >= 4} />
+                      <AreaAnswerTarget puzzle={areaPuzzle} />
                     </div>
                   ))}
                 </div>
@@ -894,7 +859,7 @@ function App() {
 
           </div>
 
-          {config.showSolutions && (
+          {puzzleFamily === 'math-flow' && config.showSolutions && (
             <div className="paper solutions-page">
               <header className="paper-header">
                 <div>
@@ -909,19 +874,9 @@ function App() {
                 </div>
               </header>
               <div className="paper-body">
-                {puzzleFamily === 'math-flow' ? (
-                  <div className="puzzle-wrap">
-                    <PuzzleSVG puzzle={puzzle} showAnswers={true} stickerMode={false} />
-                  </div>
-                ) : (
-                  <div className={`area-sheet area-count-${normalizedAreaConfig.puzzlesPerPage}`}>
-                    {areaWorksheet.puzzles.map((areaPuzzle) => (
-                      <div className="area-task" key={`solution-${areaPuzzle.id}`}>
-                        <AreaPuzzleSVG puzzle={areaPuzzle} showAnswers={true} compact={normalizedAreaConfig.puzzlesPerPage >= 4} />
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <div className="puzzle-wrap">
+                  <PuzzleSVG puzzle={puzzle} showAnswers={true} stickerMode={false} />
+                </div>
               </div>
             </div>
           )}

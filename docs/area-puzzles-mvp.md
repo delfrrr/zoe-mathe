@@ -37,7 +37,7 @@ The first implementation exposed several design and puzzle-quality gaps that thi
 | `src/App.tsx:393` | Area dimension guide lines are rendered independently and must remain plain, with no arrowheads or marker styling. |
 | `src/App.tsx:393` | Some dimension labels/guide lines can visually fall inside or too close to rectangles on cramped layouts. |
 | `src/App.tsx:422` | Each area puzzle is wrapped in an extra framed card; the requested worksheet should not add a task frame around each puzzle. |
-| `src/App.tsx:436` | Area answer key currently can be implemented as a compact answer list, but the required behavior is the full puzzle picture with answers revealed. |
+| `src/App.tsx:897` | The shared answer-key render path can append a solved page for Area mode. Area mode should not render an answer-key page; each puzzle should carry its own sticker-covered answer target. |
 | `src/App.tsx:127` | Math-Flow already has the required bottom sticker parking layout and labels: `Not Yet` on the left and `You Got It` on the right. Area mode must reuse this exact layout and wording. |
 
 The correction pass must address these gaps without changing the existing Math-Flow drawing geometry or its release-critical layout snapshot.
@@ -144,7 +144,7 @@ MVP constraints:
 - Dimension guide lines are plain measurement lines. They must not show arrowheads.
 - Dimension guide lines and side-length labels must sit outside the rectangle they describe and must not cross through unrelated rectangles.
 - No units are printed.
-- No worked steps are printed on the worksheet or answer key.
+- No worked steps are printed on the worksheet.
 
 ## Number Generation Rules
 
@@ -164,30 +164,33 @@ Rules:
 
 ## Sticker Behavior
 
-Each puzzle renders one sticker covering the unknown answer.
+Each puzzle renders one sticker-sized answer target near the puzzle.
 
 Worksheet page:
 
-- The unknown answer is printed underneath a sticker, matching the Math-Flow physical sticker workflow.
+- The in-picture unknown value is rendered as `?`.
+- The real answer is printed inside a nearby sticker-sized answer target.
+- The answer target is covered by a sticker, matching the Math-Flow physical sticker workflow.
 - Area stickers must use the same visual style as Math-Flow sticker discs.
 - The sticker target must be visually obvious and large enough for a physical sticker workflow.
-- The child writes the answer on or near the sticker, then peels/checks.
+- The child writes the answer on the physical sticker, places it over the answer target, then peels/checks.
+- The answer target should sit beside its puzzle when space allows and may move below the puzzle for dense, mobile, or print layouts.
+- The answer target must remain visually attached to the matching puzzle.
 - Area mode must include the same bottom parking area as Math-Flow, with the exact current layout and labels: `Not Yet` on the left and `You Got It` on the right.
 - Area mode must use one parking slot per puzzle in each bottom section, up to the current page's puzzle count.
 
 Answer key:
 
-- Shows the full puzzle picture for each area puzzle with final answers revealed in place.
-- Uses the same puzzle layout as the worksheet so a parent can visually match each solved puzzle to the printed page.
-- Does not render sticker covers on the answer key.
-- Does not include worked explanations.
+- Area mode does not have an answer-key page.
+- Area mode does not show the answer-key toggle.
+- Math-Flow keeps its existing answer-key toggle and solved-page behavior.
 
 ## UX Integration
 
 The feature should fit natively in the existing app:
 
 - Add a puzzle-family selector or equivalent mode control near the current worksheet controls.
-- Reuse the existing visual language: paper preview, sidebar controls, seed badge, Regenerate, Print worksheet, answer key toggle.
+- Reuse the existing visual language: paper preview, sidebar controls, seed badge, Regenerate, and Print worksheet.
 - Reuse the current Math-Flow sticker and bottom parking treatment in Area mode rather than creating a second interaction style.
 - Do not draw an extra border or card frame around each individual area puzzle.
 - Avoid a landing page or separate disconnected flow.
@@ -217,14 +220,14 @@ The feature should fit natively in the existing app:
 20. The generator does not throw during normal worksheet generation for allowed UI settings.
 21. Area stickers visually match the current Math-Flow sticker discs.
 22. Area mode renders the exact current Math-Flow bottom parking layout and labels: `Not Yet` on the left and `You Got It` on the right.
-23. Area answer key mode shows the full solved puzzle picture, not a compact answer list.
-24. Area answer key mode contains no worked explanations.
+23. Area mode does not show a `Print answer key` toggle.
+24. Area mode never renders an answer-key page, even after switching from Math-Flow with the answer-key toggle enabled.
 25. Area dimension guide lines have no arrowheads.
 26. Area dimension guide lines and side-length labels do not appear inside boxes or overlap unrelated geometry.
 27. Area puzzles are separated without extra task frames/cards around individual puzzles.
 28. Existing Math-Flow output remains deterministic for existing seeds/configs.
 29. `src/lib/__tests__/layout.test.ts` remains green without snapshot changes unless the user explicitly approves a current Math-Flow geometry change.
-30. Browser verification is completed before implementation handoff: exact URL/seed, screenshot of worksheet preview, answer-key screenshot, and print-media/PDF check.
+30. Browser verification is completed before implementation handoff: exact URL/seed, screenshot of worksheet preview, and print-media/PDF check proving Area mode has no answer-key pages.
 
 ## Testing Plan
 
@@ -248,7 +251,7 @@ The feature should fit natively in the existing app:
 | Browser | Area stickers match Math-Flow sticker visual style | +1 scripted visual/style check |
 | Browser | Area mode renders the Math-Flow bottom parking layout and exact labels | +1 scripted check |
 | Browser | Print media hides sidebar and keeps selected area puzzles plus bottom parking on printable page | +1 scripted print/PDF check |
-| Browser | Answer key renders full solved puzzle pictures with no sticker covers and no worked explanations | +1 scripted check |
+| Browser | Area mode suppresses the answer-key toggle and answer-key page while Math-Flow keeps them | +1 scripted check |
 | Browser | High-density layouts have no dimension labels inside boxes, no arrowheads, no extra frames, and no overflow | +1 scripted check |
 
 ## Files Reference
@@ -270,7 +273,7 @@ The feature should fit natively in the existing app:
 - Custom worksheet title.
 - Saving multiple generated pages.
 - Interactive browser solving.
-- Worked explanations in the answer key.
+- Worked explanations.
 - Printing units such as `in` or `in^2`.
 - Changing current Math-Flow arrow/circle geometry.
 - Changing current Math-Flow bottom parking layout or labels.
