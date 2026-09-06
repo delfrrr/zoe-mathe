@@ -67,7 +67,7 @@ const PRESETS: Preset[] = [
 ]
 
 const OP_LABEL: Record<Op, string> = { '+': '+', '-': '-', x: 'x', '/': '/' }
-const OP_RENDER: Record<Op, string> = { '+': '+', '-': '−', x: '×', '/': '÷' }
+const OP_RENDER: Record<Op, string> = { '+': '+', '-': '−', x: '×', '/': '/' }
 const AREA_SIZE_LABEL: Record<AreaNumberSize, string> = {
   1: 'Small',
   2: 'Medium',
